@@ -1,0 +1,16 @@
+[package]
+name = "cqfrs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitintr = "0.3.0"
+crossbeam = "0.8.2"
+libc = "0.2.147"
+memmap2 = "0.7.1"
+parking_lot = "0.12.1"
+rand = "0.8.5"
+rayon = "1.7.0"
+xxhash-rust = { version = "0.8.6", features = ["xxh3"] }
