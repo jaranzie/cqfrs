@@ -5,11 +5,17 @@ mod partitioned_counter;
 use blocks::{Block, Blocks};
 use crossbeam::utils::CachePadded;
 use parking_lot::Mutex;
-use partitioned_counter::PartitionedCounter;
+// use partitioned_counter::PartitionedCounter;
 use std::alloc::{self, Layout};
+use std::fs::OpenOptions;
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
-use std::ptr::NonNull;
-// use std::cell::UnsafeCell;
+use std::ptr::{self, NonNull};
+
+use libc::{
+    c_void, madvise, mmap, munmap, MADV_RANDOM, MAP_ANONYMOUS, MAP_FAILED, MAP_HUGETLB,
+    MAP_PRIVATE, MAP_SHARED, PROT_READ, PROT_WRITE,
+};
 use std::sync::Arc;
 use std::{
     fs::File,
@@ -44,9 +50,9 @@ pub enum HashMode {
 struct RuntimeData {
     pub file: Option<File>,
     pub auto_resize: bool,
-    pub pc_num_elements: PartitionedCounter,
-    pub pc_num_distinct_elements: PartitionedCounter,
-    pub pc_num_occupied_slots: PartitionedCounter,
+    // pub pc_num_elements: PartitionedCounter,
+    // pub pc_num_distinct_elements: PartitionedCounter,
+    // pub pc_num_occupied_slots: PartitionedCounter,
     pub num_locks: u64,
     pub metadata_lock: Mutex<()>,
     pub locks: Vec<CachePadded<Mutex<()>>>,
@@ -63,38 +69,55 @@ struct Metadata {
     pub num_blocks: u64,
     pub quotient_bits: u64,
     pub remainder_bits: u64,
-    // Unsure if needed
-    pub bits_per_slot: u64,
-    // pub range: u128,
-    pub num_elements: AtomicI64,
-    pub num_distinct_elts: AtomicI64,
     pub num_occupied_slots: AtomicI64,
-    // pub magic_endian_number: u64,
-    // pub seed: u32,
     pub hash_mode: u32,
-    // pub reserved: u32,
+    // Unsure if needed
+    // pub bits_per_slot: u64,
+    // pub num_elements: AtomicI64,
+    // pub num_distinct_elts: AtomicI64,
 }
 
-pub struct CountingQuotientFilter {
-    runtimedata: Box<RuntimeData>,
-    metadata_blocks: Box<MetadataBlocks>,
-}
-
-#[repr(C)]
 struct MetadataBlocks {
     metadata: Metadata,
     blocks: Blocks,
 }
 
+pub struct CountingQuotientFilter<'a> {
+    runtimedata: Box<RuntimeData>,
+    metadata_blocks: &'a MetadataBlocks,
+}
+
+#[repr(C)]
+
+
 pub enum InsertFlags {
     Test,
+}
+
+impl Drop for CountingQuotientFilter<'_> {
+    fn drop(&mut self) {
+        let size = self.metadata_blocks.metadata.total_size_in_bytes;
+        if self.runtimedata.file.is_some() {
+            unsafe {
+                munmap(
+                    self.metadata_blocks as *const _ as *mut c_void,
+                    size as usize,
+                );
+            }
+            let f = self.runtimedata.file.take().unwrap();
+            drop(f);
+        } else {
+            let layout = Layout::from_size_align(size as usize, 8).unwrap();
+            unsafe { alloc::dealloc(self.metadata_blocks as *const _ as *mut u8, layout) };
+        }
+    }
 }
 
 // struct Blocks([UnsafeCell<Block>; 1]);
 
 /// lognslots should be atleast as big as quotient_bits, probably equal is best
-impl CountingQuotientFilter {
-    pub fn new(lognslots: u64, quotient_bits: u64, hash: HashMode) -> Result<Self, ()> {
+impl CountingQuotientFilter<'_> {
+    pub fn new(lognslots: u64, quotient_bits: u64, hash_mode: HashMode) -> Result<Self, ()> {
         if quotient_bits > QF_BITS_PER_SLOT {
             return Err(());
         } else if quotient_bits == 0 {
@@ -102,7 +125,6 @@ impl CountingQuotientFilter {
         } else if quotient_bits > lognslots {
             return Err(());
         }
-
         let num_slots: u64 = 1 << lognslots;
         let real_num_slots: u64 = (num_slots as f64 + 10 as f64 * (num_slots as f64).sqrt()) as u64;
         let num_blocks =
@@ -119,11 +141,8 @@ impl CountingQuotientFilter {
             Some(p) => p,
             None => return Err(()),
         };
-        // if buffer.is_null() {
-        //     // Memory allocation error
-        //     return Err(());
-        // }
-        let mut metadata_blocks = unsafe { Box::from_raw(buffer.as_ptr() as *mut MetadataBlocks) };
+        let metadata_blocks = unsafe { &mut *(buffer.as_ptr() as *mut MetadataBlocks) };
+
         // metadata_blocks.metadata.seed = seed;
         metadata_blocks.metadata.logn_slots = lognslots;
         metadata_blocks.metadata.num_blocks = num_blocks;
@@ -131,14 +150,15 @@ impl CountingQuotientFilter {
         metadata_blocks.metadata.quotient_bits = quotient_bits;
         metadata_blocks.metadata.real_num_slots = real_num_slots;
         metadata_blocks.metadata.total_size_in_bytes = total_bytes;
+        metadata_blocks.metadata.hash_mode = hash_mode as u32;
 
         // metadata_blocks.metadata.hash_mode = hash as u32;
         // metadata_blocks.metadata.magic_endian_number = MAGIC_NUMBER;
         // metadata_blocks.metadata.reserved = 0;
         // metadata_blocks.metadata.range = (num_slots << 0) as u128;
 
-        metadata_blocks.metadata.num_elements = AtomicI64::new(0);
-        metadata_blocks.metadata.num_distinct_elts = AtomicI64::new(0);
+        // metadata_blocks.metadata.num_elements = AtomicI64::new(0);
+        // metadata_blocks.metadata.num_distinct_elts = AtomicI64::new(0);
         metadata_blocks.metadata.num_occupied_slots = AtomicI64::new(0);
 
         let num_locks = metadata_blocks.metadata.real_num_slots / NUM_SLOTS_TO_LOCK + 2;
@@ -148,8 +168,8 @@ impl CountingQuotientFilter {
             locks.push(CachePadded::new(Mutex::new(())));
         }
 
-        let nelts_ptr = &metadata_blocks.metadata.num_elements as *const AtomicI64;
-        let ndistinct_elts_ptr = &metadata_blocks.metadata.num_distinct_elts as *const AtomicI64;
+        // let nelts_ptr = &metadata_blocks.metadata.num_elements as *const AtomicI64;
+        // let ndistinct_elts_ptr = &metadata_blocks.metadata.num_distinct_elts as *const AtomicI64;
         let noccupied_slots_ptr = &metadata_blocks.metadata.num_occupied_slots as *const AtomicI64;
 
         let cqf = CountingQuotientFilter {
@@ -157,17 +177,6 @@ impl CountingQuotientFilter {
             runtimedata: Box::new(RuntimeData {
                 file: None,
                 auto_resize: false,
-                pc_num_elements: PartitionedCounter::new(nelts_ptr, NUM_COUNTERS, THRESHOLD),
-                pc_num_distinct_elements: PartitionedCounter::new(
-                    ndistinct_elts_ptr,
-                    NUM_COUNTERS,
-                    THRESHOLD,
-                ),
-                pc_num_occupied_slots: PartitionedCounter::new(
-                    noccupied_slots_ptr,
-                    NUM_COUNTERS,
-                    THRESHOLD,
-                ),
                 num_locks,
                 metadata_lock: Mutex::new(()),
                 locks,
@@ -176,7 +185,176 @@ impl CountingQuotientFilter {
         Ok(cqf)
     }
 
-    pub fn new_file(lognslots: u64, quotient_bits: u64, hash: HashMode, file: PathBuf) {}
+    pub fn new_file(
+        lognslots: u64,
+        quotient_bits: u64,
+        hash_mode: HashMode,
+        file: PathBuf,
+    ) -> Result<Self, ()> {
+        if quotient_bits > QF_BITS_PER_SLOT {
+            return Err(());
+        } else if quotient_bits == 0 {
+            return Err(());
+        } else if quotient_bits > lognslots {
+            return Err(());
+        }
+        let num_slots: u64 = 1 << lognslots;
+        let real_num_slots: u64 = (num_slots as f64 + 10 as f64 * (num_slots as f64).sqrt()) as u64;
+        let num_blocks =
+            (real_num_slots + QF_SLOTS_PER_BLOCK as u64 - 1) / QF_SLOTS_PER_BLOCK as u64;
+        let remainder_bits = QF_BITS_PER_SLOT as u64 - quotient_bits;
+
+        let total_size_blocks: u64 = num_blocks * std::mem::size_of::<Block>() as u64;
+        let total_bytes: u64 = total_size_blocks + std::mem::size_of::<Metadata>() as u64;
+
+        let f = match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(file)
+        {
+            Ok(f) => f,
+            Err(_) => return Err(()),
+        };
+
+        match f.set_len(total_bytes as u64) {
+            Ok(_) => (),
+            Err(_) => return Err(()),
+        };
+
+        let mm = unsafe {
+            mmap(
+                ptr::null_mut(),
+                total_bytes as usize,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED,
+                f.as_raw_fd(),
+                0,
+            )
+        };
+        if mm == MAP_FAILED {
+            return Err(());
+        }
+
+        let metadata_blocks = unsafe { &mut *(mm as *mut MetadataBlocks) };
+        // metadata_blocks.metadata.seed = seed;
+        metadata_blocks.metadata.logn_slots = lognslots;
+        metadata_blocks.metadata.num_blocks = num_blocks;
+        metadata_blocks.metadata.remainder_bits = remainder_bits;
+        metadata_blocks.metadata.quotient_bits = quotient_bits;
+        metadata_blocks.metadata.real_num_slots = real_num_slots;
+        metadata_blocks.metadata.total_size_in_bytes = total_bytes;
+        metadata_blocks.metadata.hash_mode = hash_mode as u32;
+
+        // metadata_blocks.metadata.hash_mode = hash as u32;
+        // metadata_blocks.metadata.magic_endian_number = MAGIC_NUMBER;
+        // metadata_blocks.metadata.reserved = 0;
+        // metadata_blocks.metadata.range = (num_slots << 0) as u128;
+
+        // metadata_blocks.metadata.num_elements = AtomicI64::new(0);
+        // metadata_blocks.metadata.num_distinct_elts = AtomicI64::new(0);
+        metadata_blocks.metadata.num_occupied_slots = AtomicI64::new(0);
+
+        let num_locks = metadata_blocks.metadata.real_num_slots / NUM_SLOTS_TO_LOCK + 2;
+
+        let mut locks: Vec<CachePadded<Mutex<()>>> = Vec::with_capacity(num_locks as usize);
+        for _ in 0..num_locks {
+            locks.push(CachePadded::new(Mutex::new(())));
+        }
+
+        // let nelts_ptr = &metadata_blocks.metadata.num_elements as *const AtomicI64;
+        // let ndistinct_elts_ptr = &metadata_blocks.metadata.num_distinct_elts as *const AtomicI64;
+        let noccupied_slots_ptr = &metadata_blocks.metadata.num_occupied_slots as *const AtomicI64;
+
+        let cqf = CountingQuotientFilter {
+            metadata_blocks,
+            runtimedata: Box::new(RuntimeData {
+                file: Some(f),
+                auto_resize: false,
+                // pc_num_elements: PartitionedCounter::new(nelts_ptr, NUM_COUNTERS, THRESHOLD),
+                // pc_num_distinct_elements: PartitionedCounter::new(
+                //     ndistinct_elts_ptr,
+                //     NUM_COUNTERS,
+                //     THRESHOLD,
+                // ),
+                // pc_num_occupied_slots: PartitionedCounter::new(
+                //     noccupied_slots_ptr,
+                //     NUM_COUNTERS,
+                //     THRESHOLD,
+                // ),
+                num_locks,
+                metadata_lock: Mutex::new(()),
+                locks,
+            }),
+        };
+        Ok(cqf)
+    }
+
+    pub fn open_file(file: PathBuf) -> Result<Self, ()> {
+        let f = match OpenOptions::new().read(true).write(true).open(file) {
+            Ok(f) => f,
+            Err(_) => return Err(()),
+        };
+
+        // get file size
+        let metadata = match f.metadata() {
+            Ok(m) => m,
+            Err(_) => return Err(()),
+        };
+        let total_bytes = metadata.len();
+
+        let mm = unsafe {
+            mmap(
+                ptr::null_mut(),
+                total_bytes as usize,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED,
+                f.as_raw_fd(),
+                0,
+            )
+        };
+
+        if mm == MAP_FAILED {
+            return Err(());
+        }
+
+        let metadata_blocks = unsafe { &mut *(mm as *mut MetadataBlocks) };
+
+
+        let num_locks = metadata_blocks.metadata.real_num_slots / NUM_SLOTS_TO_LOCK + 2;
+
+        let mut locks: Vec<CachePadded<Mutex<()>>> = Vec::with_capacity(num_locks as usize);
+        for _ in 0..num_locks {
+            locks.push(CachePadded::new(Mutex::new(())));
+        }
+
+        // let nelts_ptr = &metadata_blocks.metadata.num_elements as *const AtomicI64;
+        // let ndistinct_elts_ptr = &metadata_blocks.metadata.num_distinct_elts as *const AtomicI64;
+        let noccupied_slots_ptr = &metadata_blocks.metadata.num_occupied_slots as *const AtomicI64;
+
+        let cqf = CountingQuotientFilter {
+            metadata_blocks,
+            runtimedata: Box::new(RuntimeData {
+                file: Some(f),
+                auto_resize: false,
+                // pc_num_elements: PartitionedCounter::new(nelts_ptr, NUM_COUNTERS, THRESHOLD),
+                // pc_num_distinct_elements: PartitionedCounter::new(
+                //     ndistinct_elts_ptr,
+                //     NUM_COUNTERS,
+                //     THRESHOLD,
+                // ),
+                // pc_num_occupied_slots: PartitionedCounter::new(
+                //     noccupied_slots_ptr,
+                //     NUM_COUNTERS,
+                //     THRESHOLD,
+                // ),
+                num_locks,
+                metadata_lock: Mutex::new(()),
+                locks,
+            }),
+        };
+        Ok(cqf)
+    }
 
     pub fn insert(&self, item: u64, count: u64) -> Result<(), ()> {
         if self.get_num_occupied_slots() >= (self.get_num_slots() as f64 * 0.95) as u64 {
@@ -199,7 +377,7 @@ impl CountingQuotientFilter {
     }
 
     pub fn get_num_occupied_slots(&self) -> u64 {
-        self.runtimedata.pc_num_occupied_slots.sync();
+        // self.runtimedata.pc_num_occupied_slots.sync();
         self.metadata_blocks
             .metadata
             .num_occupied_slots
@@ -210,17 +388,17 @@ impl CountingQuotientFilter {
         //     .noccupied_slots as *const AtomicI64 as *const u64)}
     }
 
-    pub fn get_num_distinct_key_value_pairs(&self) -> u64 {
-        self.runtimedata.pc_num_distinct_elements.sync();
-        self.metadata_blocks
-            .metadata
-            .num_distinct_elts
-            .load(Ordering::Relaxed) as u64
-    }
+    // pub fn get_num_distinct_key_value_pairs(&self) -> u64 {
+    //     // self.runtimedata.pc_num_distinct_elements.sync();
+    //     self.metadata_blocks
+    //         .metadata
+    //         .num_distinct_elts
+    //         .load(Ordering::Relaxed) as u64
+    // }
 
-    pub fn get_bits_per_slot(&self) -> u64 {
-        self.metadata_blocks.metadata.bits_per_slot
-    }
+    // pub fn get_bits_per_slot(&self) -> u64 {
+    //     self.metadata_blocks.metadata.bits_per_slot
+    // }
 
     pub fn get_num_slots(&self) -> u64 {
         1 << self.metadata_blocks.metadata.logn_slots
@@ -264,13 +442,13 @@ impl CountingQuotientFilter {
         self.metadata_blocks.metadata.total_size_in_bytes
     }
 
-    pub fn get_sum_of_counts(&self) -> u64 {
-        self.runtimedata.pc_num_elements.sync();
-        self.metadata_blocks
-            .metadata
-            .num_elements
-            .load(Ordering::Relaxed) as u64
-    }
+    // pub fn get_sum_of_counts(&self) -> u64 {
+    //     // self.runtimedata.pc_num_elements.sync();
+    //     self.metadata_blocks
+    //         .metadata
+    //         .num_elements
+    //         .load(Ordering::Relaxed) as u64
+    // }
 
     fn quotient_remainder_from_hash(&self, hash: u64) -> (usize, u64) {
         let quotient = (hash >> self.metadata_blocks.metadata.remainder_bits)
@@ -343,8 +521,6 @@ impl CountingQuotientFilter {
     // }
 
     pub fn insert_by_hash(&self, hash: u64, count: u64) -> Result<(), ()> {
-        // self.check_and_resize();
-
         let (quotient, remainder) = self.calc_qr(hash);
         let runend_index = self.run_end(quotient);
 
@@ -352,9 +528,21 @@ impl CountingQuotientFilter {
             self.set_runend(quotient, true);
             self.set_slot(quotient, remainder);
             self.set_occupied(quotient, true);
-            self.runtimedata.pc_num_occupied_slots.add(1);
-            self.runtimedata.pc_num_distinct_elements.add(1);
-            self.runtimedata.pc_num_elements.add(1);
+            self.metadata_blocks
+                .metadata
+                .num_occupied_slots
+                .fetch_add(1, Ordering::SeqCst);
+            // self.metadata_blocks
+                // .metadata
+                // .num_distinct_elts
+                // .fetch_add(1, Ordering::SeqCst);
+            // self.metadata_blocks
+            //     .metadata
+            //     .num_elements
+            //     .fetch_add(1, Ordering::SeqCst);
+            // self.runtimedata.pc_num_occupied_slots.add(1);
+            // self.runtimedata.pc_num_distinct_elements.add(1);
+            // self.runtimedata.pc_num_elements.add(1);
             if count > 1 {
                 self.insert_by_hash(hash, count - 1)?;
             }
@@ -538,7 +726,10 @@ impl CountingQuotientFilter {
             self.set_count(insert_index + 1, true);
             self.set_slot(insert_index + 1, count);
         }
-        self.runtimedata.pc_num_elements.add(ninserts as i64);
+        self.metadata_blocks
+            .metadata
+            .num_occupied_slots
+            .fetch_add(ninserts as i64, Ordering::SeqCst);
     }
 
     pub fn query(&self, item: u64) -> u64 {
