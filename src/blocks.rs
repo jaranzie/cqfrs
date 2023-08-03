@@ -169,14 +169,12 @@ impl Blocks {
     //     0
     // }
 
-
     fn run_end(&self, quotient: usize) -> usize {
         let block_idx: usize = quotient / 64;
         let intrablock_offset: usize = quotient % 64;
         let block = self.get_block_mut(block_idx);
         let blocks_offset: usize = block.offset.into();
-        let intrablock_rank: usize =
-            bitrank(block.occupieds, intrablock_offset);
+        let intrablock_rank: usize = bitrank(block.occupieds, intrablock_offset);
 
         if intrablock_rank == 0 {
             if blocks_offset <= intrablock_offset {
