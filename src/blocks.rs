@@ -7,14 +7,14 @@ use bitintr::{Pdep, Popcnt, Tzcnt};
 
 #[repr(C)]
 pub struct Block {
+    pub occupieds: u64,
+    pub runends: u64,
+    counts: u64,
+    remainders: [BlockT; QF_SLOTS_PER_BLOCK],
     pub offset: u16,
     // occupieds: [u64; QF_METADATA_WORDS_PER_BLOCK],
     // runends: [u64; QF_METADATA_WORDS_PER_BLOCK],
     // counts: [u64; QF_METADATA_WORDS_PER_BLOCK],
-    pub occupieds: u64,
-    pub runends: u64,
-    pub counts: u64,
-    pub remainders: [BlockT; QF_SLOTS_PER_BLOCK],
 }
 
 impl Block {
@@ -169,13 +169,14 @@ impl Blocks {
     //     0
     // }
 
-    // I don't think this is correct if runs can cross blocks
-    pub fn run_end(&self, quotient: usize) -> usize {
+
+    fn run_end(&self, quotient: usize) -> usize {
         let block_idx: usize = quotient / 64;
         let intrablock_offset: usize = quotient % 64;
-        let blocks_offset: usize = self.get_block(block_idx).offset.into();
+        let block = self.get_block_mut(block_idx);
+        let blocks_offset: usize = block.offset.into();
         let intrablock_rank: usize =
-            bitrank(self.get_block(block_idx).occupieds, intrablock_offset);
+            bitrank(block.occupieds, intrablock_offset);
 
         if intrablock_rank == 0 {
             if blocks_offset <= intrablock_offset {
@@ -224,6 +225,61 @@ impl Blocks {
             runend_index
         }
     }
+    // I don't think this is correct if runs can cross blocks
+    // pub fn run_end(&self, quotient: usize) -> usize {
+    //     let block_idx: usize = quotient / 64;
+    //     let intrablock_offset: usize = quotient % 64;
+    //     let blocks_offset: usize = self.get_block(block_idx).offset.into();
+    //     let intrablock_rank: usize =
+    //         bitrank(self.get_block(block_idx).occupieds, intrablock_offset);
+
+    //     if intrablock_rank == 0 {
+    //         if blocks_offset <= intrablock_offset {
+    //             return quotient;
+    //         } else {
+    //             return 64 * block_idx + blocks_offset - 1;
+    //         }
+    //     }
+
+    //     let mut runend_block_index: usize = block_idx + blocks_offset / 64;
+    //     let mut runend_ignore_bits: usize = blocks_offset % 64;
+    //     let mut runend_rank: usize = intrablock_rank - 1;
+    //     let mut runend_block_offset: usize = bitselectv(
+    //         self.get_block(runend_block_index).runends,
+    //         runend_ignore_bits,
+    //         runend_rank,
+    //     );
+
+    //     if runend_block_offset == 64 {
+    //         if blocks_offset == 0 && intrablock_rank == 0 {
+    //             return quotient;
+    //         } else {
+    //             loop {
+    //                 runend_rank -= popcntv(
+    //                     self.get_block(runend_block_index).runends,
+    //                     runend_ignore_bits,
+    //                 );
+    //                 runend_block_index += 1;
+    //                 runend_ignore_bits = 0;
+    //                 runend_block_offset = bitselectv(
+    //                     self.get_block(runend_block_index).runends,
+    //                     runend_ignore_bits,
+    //                     runend_rank,
+    //                 );
+    //                 if runend_block_offset != 64 {
+    //                     break;
+    //                 }
+    //             }
+    //         }
+    //     }
+
+    //     let runend_index = 64 * runend_block_index + runend_block_offset;
+    //     if runend_index < quotient {
+    //         quotient
+    //     } else {
+    //         runend_index
+    //     }
+    // }
 }
 
 // Blocks::set_remainder_block(&mut block, slot_index, remainder);

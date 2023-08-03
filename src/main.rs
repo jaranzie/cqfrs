@@ -7,21 +7,21 @@ use std::time::Instant;
 const LOGN_SLOTS: u64 = 26;
 
 fn main() {
-    // let qf = CountingQuotientFilter::new(LOGN_SLOTS, LOGN_SLOTS, HashMode::Invertible).unwrap();
+    let qf = CountingQuotientFilter::new(LOGN_SLOTS, LOGN_SLOTS, HashMode::Invertible).unwrap();
 
-    // let n_strings: usize = ((1 << LOGN_SLOTS) as f32 * 0.9) as usize;
-    // let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
+    let n_strings: usize = ((1 << LOGN_SLOTS) as f32 * 0.9) as usize;
+    let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
 
-    // let mut rng = rand::thread_rng();
-    // for _ in 0..n_strings {
-    //     numbers.push(rng.gen())
-    // }
+    let mut rng = rand::thread_rng();
+    for _ in 0..n_strings {
+        numbers.push(rng.gen())
+    }
 
-    // let now = Instant::now();
-    // for i in 0..n_strings {
-    //     //qf.insert(strings[i].as_bytes(), 3)?;
-    //     qf.insert(numbers[i] as u64, 1).expect("insert failed!");
-    // }
+    let now = Instant::now();
+    for i in 0..n_strings {
+        //qf.insert(strings[i].as_bytes(), 3)?;
+        qf.insert((numbers[i]) as u64, 3).expect("insert failed!");
+    }
 
     ///////////////////////////////////////
     // let num_threads = 6;
@@ -71,56 +71,13 @@ fn main() {
 
     ///////////////////////////////////////////////////////////////////////
 
-    let mut qf =
-        CountingQuotientFilter::new(25, 25, HashMode::Invertible).expect("failed to make cqf");
+    // let mut qf =
+    //     CountingQuotientFilter::new(25, 25, HashMode::Invertible).expect("failed to make cqf");
 
-    let qf = CountingQuotientFilter::new_file(25, 25, HashMode::Invertible, "test.qf".into())
-        .expect("failed to make cqf");
-    // let qf = CountingQuotientFilter::open_file("test.qf".into()).expect("failed to make cqf");
-    let n_strings: usize = 10_000_000;
-
-    let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
-    let mut rng = rand::thread_rng();
-
-    for _ in 0..n_strings {
-        numbers.push(rng.gen())
-    }
-
-    for i in 0..n_strings / 2 {
-        //qf.insert(strings[i].as_bytes(), 3)?;
-        match qf.insert(numbers[i], 3) {
-            Err(_) => eprintln!("Error inserting"),
-            _ => continue,
-        };
-    }
-    let mut total_in = 0;
-    for i in 0..n_strings / 2 {
-        //assert!(qf.query(strings[i].as_bytes()) > 0, "false negative!");
-        let p = qf.query(numbers[i]);
-        total_in += p;
-        assert!(qf.query(numbers[i]) > 0, "false negative!");
-    }
-
-    let mut present: u32 = 0;
-    for i in n_strings / 2..n_strings {
-        /*
-        if qf.query(strings[i].as_bytes()) > 0 {
-            present += 1;
-        }
-        */
-        if qf.query(numbers[i]) > 0 {
-            present += 1;
-        }
-    }
-    assert_eq!(present, 0);
-    println!("{} elements present", total_in);
-
-    drop(qf);
-
-    // MMAP LOAD TEST
-
-    let qf = CountingQuotientFilter::open_file("test.qf".into()).expect("failed to make cqf");
-    let n_strings: usize = 10_000_000;
+    // let qf = CountingQuotientFilter::new_file(25, 25, HashMode::Invertible, "test.qf".into())
+    //     .expect("failed to make cqf");
+    // // let qf = CountingQuotientFilter::open_file("test.qf".into()).expect("failed to make cqf");
+    // let n_strings: usize = 10_000_000;
 
     // let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
     // let mut rng = rand::thread_rng();
@@ -129,27 +86,70 @@ fn main() {
     //     numbers.push(rng.gen())
     // }
 
-    let mut total_in = 0;
-    for i in 0..n_strings / 2 {
-        //assert!(qf.query(strings[i].as_bytes()) > 0, "false negative!");
-        let p = qf.query(numbers[i]);
-        total_in += p;
-        assert!(qf.query(numbers[i]) > 0, "false negative!");
-    }
+    // for i in 0..n_strings / 2 {
+    //     //qf.insert(strings[i].as_bytes(), 3)?;
+    //     match qf.insert(numbers[i], 3) {
+    //         Err(_) => eprintln!("Error inserting"),
+    //         _ => continue,
+    //     };
+    // }
+    // let mut total_in = 0;
+    // for i in 0..n_strings / 2 {
+    //     //assert!(qf.query(strings[i].as_bytes()) > 0, "false negative!");
+    //     let p = qf.query(numbers[i]);
+    //     total_in += p;
+    //     assert!(qf.query(numbers[i]) > 0, "false negative!");
+    // }
 
-    let mut present: u32 = 0;
-    for i in n_strings / 2..n_strings {
-        /*
-        if qf.query(strings[i].as_bytes()) > 0 {
-            present += 1;
-        }
-        */
-        if qf.query(numbers[i]) > 0 {
-            present += 1;
-        }
-    }
-    assert_eq!(present, 0);
-    println!("{} elements present", total_in);
+    // let mut present: u32 = 0;
+    // for i in n_strings / 2..n_strings {
+    //     /*
+    //     if qf.query(strings[i].as_bytes()) > 0 {
+    //         present += 1;
+    //     }
+    //     */
+    //     if qf.query(numbers[i]) > 0 {
+    //         present += 1;
+    //     }
+    // }
+    // assert_eq!(present, 0);
+    // println!("{} elements present", total_in);
+
+    // drop(qf);
+
+    // // MMAP LOAD TEST
+
+    // let qf = CountingQuotientFilter::open_file("test.qf".into()).expect("failed to make cqf");
+    // let n_strings: usize = 10_000_000;
+
+    // // let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
+    // // let mut rng = rand::thread_rng();
+
+    // // for _ in 0..n_strings {
+    // //     numbers.push(rng.gen())
+    // // }
+
+    // let mut total_in = 0;
+    // for i in 0..n_strings / 2 {
+    //     //assert!(qf.query(strings[i].as_bytes()) > 0, "false negative!");
+    //     let p = qf.query(numbers[i]);
+    //     total_in += p;
+    //     assert!(qf.query(numbers[i]) > 0, "false negative!");
+    // }
+
+    // let mut present: u32 = 0;
+    // for i in n_strings / 2..n_strings {
+    //     /*
+    //     if qf.query(strings[i].as_bytes()) > 0 {
+    //         present += 1;
+    //     }
+    //     */
+    //     if qf.query(numbers[i]) > 0 {
+    //         present += 1;
+    //     }
+    // }
+    // assert_eq!(present, 0);
+    // println!("{} elements present", total_in);
 
     // let qf = CountingQuotientFilter::new_file(25,25,HashMode::Invertible, "test.qf".into()).expect("failed to make cqf");
 }

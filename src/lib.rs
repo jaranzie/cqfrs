@@ -48,14 +48,14 @@ pub enum HashMode {
 }
 
 struct RuntimeData {
-    pub file: Option<File>,
-    pub auto_resize: bool,
+    file: Option<File>,
+    auto_resize: bool,
+    num_locks: u64,
+    metadata_lock: Mutex<()>,
+    locks: Vec<CachePadded<Mutex<()>>>,
     // pub pc_num_elements: PartitionedCounter,
     // pub pc_num_distinct_elements: PartitionedCounter,
     // pub pc_num_occupied_slots: PartitionedCounter,
-    pub num_locks: u64,
-    pub metadata_lock: Mutex<()>,
-    pub locks: Vec<CachePadded<Mutex<()>>>,
 }
 
 unsafe impl Sync for RuntimeData {}
@@ -63,28 +63,25 @@ unsafe impl Send for RuntimeData {}
 
 #[repr(C)]
 struct Metadata {
-    pub total_size_in_bytes: u64,
-    pub logn_slots: u64,
-    pub real_num_slots: u64,
-    pub num_blocks: u64,
-    pub quotient_bits: u64,
-    pub remainder_bits: u64,
-    pub num_occupied_slots: AtomicI64,
-    pub hash_mode: u32,
+    total_size_in_bytes: u64,
+    logn_slots: u64,
+    real_num_slots: u64,
+    num_blocks: u64,
+    quotient_bits: u64,
+    remainder_bits: u64,
+    num_occupied_slots: AtomicI64,
+    hash_mode: u32,
     // Unsure if needed
     // pub bits_per_slot: u64,
     // pub num_elements: AtomicI64,
     // pub num_distinct_elts: AtomicI64,
 }
 
-struct MetadataBlocks {
-    metadata: Metadata,
-    blocks: Blocks,
-}
-
-pub struct CountingQuotientFilter<'a> {
+pub struct CountingQuotientFilter {
     runtimedata: Box<RuntimeData>,
-    metadata_blocks: &'a MetadataBlocks,
+    metadata: *mut Metadata,
+    blocks: *mut Blocks,
+    // metadata_blocks: *mut MetadataBlocks,
 }
 
 #[repr(C)]
@@ -94,13 +91,13 @@ pub enum InsertFlags {
     Test,
 }
 
-impl Drop for CountingQuotientFilter<'_> {
+impl Drop for CountingQuotientFilter {
     fn drop(&mut self) {
-        let size = self.metadata_blocks.metadata.total_size_in_bytes;
+        let size = self.metadata().total_size_in_bytes;
         if self.runtimedata.file.is_some() {
             unsafe {
                 munmap(
-                    self.metadata_blocks as *const _ as *mut c_void,
+                    self.metadata as *const _ as *mut c_void,
                     size as usize,
                 );
             }
@@ -108,7 +105,7 @@ impl Drop for CountingQuotientFilter<'_> {
             drop(f);
         } else {
             let layout = Layout::from_size_align(size as usize, 8).unwrap();
-            unsafe { alloc::dealloc(self.metadata_blocks as *const _ as *mut u8, layout) };
+            unsafe { alloc::dealloc(self.metadata as *const _ as *mut u8, layout) };
         }
     }
 }
@@ -116,7 +113,7 @@ impl Drop for CountingQuotientFilter<'_> {
 // struct Blocks([UnsafeCell<Block>; 1]);
 
 /// lognslots should be atleast as big as quotient_bits, probably equal is best
-impl CountingQuotientFilter<'_> {
+impl CountingQuotientFilter {
     pub fn new(lognslots: u64, quotient_bits: u64, hash_mode: HashMode) -> Result<Self, ()> {
         if quotient_bits > QF_BITS_PER_SLOT {
             return Err(());
@@ -141,27 +138,22 @@ impl CountingQuotientFilter<'_> {
             Some(p) => p,
             None => return Err(()),
         };
-        let metadata_blocks = unsafe { &mut *(buffer.as_ptr() as *mut MetadataBlocks) };
-
+        let metadata = unsafe { &mut *(buffer.as_ptr() as *mut Metadata) };
+        let blocks = unsafe { &mut *(buffer.as_ptr().add(std::mem::size_of::<Metadata>()) as *mut Blocks) };
         // metadata_blocks.metadata.seed = seed;
-        metadata_blocks.metadata.logn_slots = lognslots;
-        metadata_blocks.metadata.num_blocks = num_blocks;
-        metadata_blocks.metadata.remainder_bits = remainder_bits;
-        metadata_blocks.metadata.quotient_bits = quotient_bits;
-        metadata_blocks.metadata.real_num_slots = real_num_slots;
-        metadata_blocks.metadata.total_size_in_bytes = total_bytes;
-        metadata_blocks.metadata.hash_mode = hash_mode as u32;
-
-        // metadata_blocks.metadata.hash_mode = hash as u32;
-        // metadata_blocks.metadata.magic_endian_number = MAGIC_NUMBER;
-        // metadata_blocks.metadata.reserved = 0;
-        // metadata_blocks.metadata.range = (num_slots << 0) as u128;
+        metadata.logn_slots = lognslots;
+        metadata.num_blocks = num_blocks;
+        metadata.remainder_bits = remainder_bits;
+        metadata.quotient_bits = quotient_bits;
+        metadata.real_num_slots = real_num_slots;
+        metadata.total_size_in_bytes = total_bytes;
+        metadata.hash_mode = hash_mode as u32;
 
         // metadata_blocks.metadata.num_elements = AtomicI64::new(0);
         // metadata_blocks.metadata.num_distinct_elts = AtomicI64::new(0);
-        metadata_blocks.metadata.num_occupied_slots = AtomicI64::new(0);
+        metadata.num_occupied_slots = AtomicI64::new(0);
 
-        let num_locks = metadata_blocks.metadata.real_num_slots / NUM_SLOTS_TO_LOCK + 2;
+        let num_locks = real_num_slots / NUM_SLOTS_TO_LOCK + 2;
 
         let mut locks: Vec<CachePadded<Mutex<()>>> = Vec::with_capacity(num_locks as usize);
         for _ in 0..num_locks {
@@ -170,10 +162,11 @@ impl CountingQuotientFilter<'_> {
 
         // let nelts_ptr = &metadata_blocks.metadata.num_elements as *const AtomicI64;
         // let ndistinct_elts_ptr = &metadata_blocks.metadata.num_distinct_elts as *const AtomicI64;
-        let noccupied_slots_ptr = &metadata_blocks.metadata.num_occupied_slots as *const AtomicI64;
+        let noccupied_slots_ptr = &metadata.num_occupied_slots as *const AtomicI64;
 
         let cqf = CountingQuotientFilter {
-            metadata_blocks,
+            metadata,
+            blocks,
             runtimedata: Box::new(RuntimeData {
                 file: None,
                 auto_resize: false,
@@ -235,16 +228,17 @@ impl CountingQuotientFilter<'_> {
         if mm == MAP_FAILED {
             return Err(());
         }
-
-        let metadata_blocks = unsafe { &mut *(mm as *mut MetadataBlocks) };
+        let metadata = unsafe { &mut *(mm as *mut Metadata) };
+        let blocks = unsafe { &mut *(mm.add(std::mem::size_of::<Metadata>()) as *mut Blocks) };
+        // let metadata_blocks = unsafe { &mut *(mm as *mut MetadataBlocks) };
         // metadata_blocks.metadata.seed = seed;
-        metadata_blocks.metadata.logn_slots = lognslots;
-        metadata_blocks.metadata.num_blocks = num_blocks;
-        metadata_blocks.metadata.remainder_bits = remainder_bits;
-        metadata_blocks.metadata.quotient_bits = quotient_bits;
-        metadata_blocks.metadata.real_num_slots = real_num_slots;
-        metadata_blocks.metadata.total_size_in_bytes = total_bytes;
-        metadata_blocks.metadata.hash_mode = hash_mode as u32;
+        metadata.logn_slots = lognslots;
+        metadata.num_blocks = num_blocks;
+        metadata.remainder_bits = remainder_bits;
+        metadata.quotient_bits = quotient_bits;
+        metadata.real_num_slots = real_num_slots;
+        metadata.total_size_in_bytes = total_bytes;
+        metadata.hash_mode = hash_mode as u32;
 
         // metadata_blocks.metadata.hash_mode = hash as u32;
         // metadata_blocks.metadata.magic_endian_number = MAGIC_NUMBER;
@@ -253,9 +247,9 @@ impl CountingQuotientFilter<'_> {
 
         // metadata_blocks.metadata.num_elements = AtomicI64::new(0);
         // metadata_blocks.metadata.num_distinct_elts = AtomicI64::new(0);
-        metadata_blocks.metadata.num_occupied_slots = AtomicI64::new(0);
+        metadata.num_occupied_slots = AtomicI64::new(0);
 
-        let num_locks = metadata_blocks.metadata.real_num_slots / NUM_SLOTS_TO_LOCK + 2;
+        let num_locks = real_num_slots / NUM_SLOTS_TO_LOCK + 2;
 
         let mut locks: Vec<CachePadded<Mutex<()>>> = Vec::with_capacity(num_locks as usize);
         for _ in 0..num_locks {
@@ -264,10 +258,11 @@ impl CountingQuotientFilter<'_> {
 
         // let nelts_ptr = &metadata_blocks.metadata.num_elements as *const AtomicI64;
         // let ndistinct_elts_ptr = &metadata_blocks.metadata.num_distinct_elts as *const AtomicI64;
-        let noccupied_slots_ptr = &metadata_blocks.metadata.num_occupied_slots as *const AtomicI64;
+        let noccupied_slots_ptr = &metadata.num_occupied_slots as *const AtomicI64;
 
         let cqf = CountingQuotientFilter {
-            metadata_blocks,
+            metadata,
+            blocks,
             runtimedata: Box::new(RuntimeData {
                 file: Some(f),
                 auto_resize: false,
@@ -288,6 +283,30 @@ impl CountingQuotientFilter<'_> {
             }),
         };
         Ok(cqf)
+    }
+
+    fn metadata(&self) -> &Metadata {
+        unsafe {
+            &*self.metadata
+        }
+    }
+
+    fn metadata_mut(&mut self) -> &mut Metadata {
+        unsafe {
+            &mut *self.metadata
+        }
+    }
+
+    fn blocks(&self) -> &Blocks {
+        unsafe {
+            &*self.blocks
+        }
+    }
+
+    fn blocks_mut(&mut self) -> &mut Blocks {
+        unsafe {
+            &mut *self.blocks
+        }
     }
 
     pub fn open_file(file: PathBuf) -> Result<Self, ()> {
@@ -318,10 +337,11 @@ impl CountingQuotientFilter<'_> {
             return Err(());
         }
 
-        let metadata_blocks = unsafe { &mut *(mm as *mut MetadataBlocks) };
+        let metadata = unsafe { &mut *(mm as *mut Metadata) };
+        let blocks = unsafe { &mut *(mm.add(std::mem::size_of::<Metadata>()) as *mut Blocks) };
 
 
-        let num_locks = metadata_blocks.metadata.real_num_slots / NUM_SLOTS_TO_LOCK + 2;
+        let num_locks = metadata.real_num_slots / NUM_SLOTS_TO_LOCK + 2;
 
         let mut locks: Vec<CachePadded<Mutex<()>>> = Vec::with_capacity(num_locks as usize);
         for _ in 0..num_locks {
@@ -330,10 +350,11 @@ impl CountingQuotientFilter<'_> {
 
         // let nelts_ptr = &metadata_blocks.metadata.num_elements as *const AtomicI64;
         // let ndistinct_elts_ptr = &metadata_blocks.metadata.num_distinct_elts as *const AtomicI64;
-        let noccupied_slots_ptr = &metadata_blocks.metadata.num_occupied_slots as *const AtomicI64;
+        let noccupied_slots_ptr = &metadata.num_occupied_slots as *const AtomicI64;
 
         let cqf = CountingQuotientFilter {
-            metadata_blocks,
+            metadata,
+            blocks,
             runtimedata: Box::new(RuntimeData {
                 file: Some(f),
                 auto_resize: false,
@@ -356,19 +377,42 @@ impl CountingQuotientFilter<'_> {
         Ok(cqf)
     }
 
+    pub fn merge_into(&self, other: Self) -> Result<(),()> {
+
+        if other.get_num_occupied_slots() + self.get_num_occupied_slots() >= (self.get_num_slots() as f64 * 0.95) as u64 {
+            // if self.runtimedata.auto_resize
+            return Err(());
+        }
+
+        // let metadata = self.metadata();
+        // let blocks = self.blocks();
+        // let other_metadata = other.metadata();
+        // let other_blocks: &Blocks = other.blocks();
+
+
+        for item in other.into_iter() {
+            self.insert(item.hash, item.count).expect("Failed to merge");
+        }
+
+
+        Ok(())
+    }
+
     pub fn insert(&self, item: u64, count: u64) -> Result<(), ()> {
         if self.get_num_occupied_slots() >= (self.get_num_slots() as f64 * 0.95) as u64 {
             // if self.runtimedata.auto_resize
             return Err(());
         }
-        let hash = calc_hash(item, self.metadata_blocks.metadata.hash_mode);
+        let metadata = self.metadata();
+        // let blocks = self.blocks();
 
-        let blocks = &self.metadata_blocks.blocks;
+        let hash = calc_hash(item, metadata.hash_mode);
+
         let (quotient, remainder) = self.quotient_remainder_from_hash(hash);
         let block_index = quotient / 64;
         let slot_index = quotient % 64;
         let blocks_per_lock =
-            self.metadata_blocks.metadata.num_blocks / (self.runtimedata.num_locks - 2);
+            metadata.num_blocks / (self.runtimedata.num_locks - 2);
         let lock_index = block_index / blocks_per_lock as usize;
         let mut lock = self.runtimedata.locks[lock_index].lock();
         let mut lock2 = self.runtimedata.locks[lock_index + 1].lock();
@@ -378,8 +422,7 @@ impl CountingQuotientFilter<'_> {
 
     pub fn get_num_occupied_slots(&self) -> u64 {
         // self.runtimedata.pc_num_occupied_slots.sync();
-        self.metadata_blocks
-            .metadata
+        self.metadata()
             .num_occupied_slots
             .load(Ordering::Relaxed) as u64
 
@@ -401,27 +444,11 @@ impl CountingQuotientFilter<'_> {
     // }
 
     pub fn get_num_slots(&self) -> u64 {
-        1 << self.metadata_blocks.metadata.logn_slots
+        1 << self.metadata().logn_slots
     }
 
-    // pub fn get_num_key_remainder_bits(&self) -> u64 {
-    //     self.metadata_blocks.metadata.key_remainder_bits
-    // }
-
-    // pub fn get_num_value_bits(&self) -> u64 {
-    //     self.metadata_blocks.metadata.value_bits
-    // }
-
-    // pub fn get_num_key_bits(&self) -> u64 {
-    //     self.metadata_blocks.metadata.key_bits
-    // }
-
-    // pub fn get_hash_seed(&self) -> u32 {
-    //     self.metadata_blocks.metadata.seed
-    // }
-
     pub fn get_hash_mode(&self) -> HashMode {
-        match self.metadata_blocks.metadata.hash_mode {
+        match self.metadata().hash_mode {
             0 => HashMode::Fast,
             1 => HashMode::Invertible,
             // 2 => HashMode::QFHashNone,
@@ -439,7 +466,7 @@ impl CountingQuotientFilter<'_> {
 
     /// Returns total size in bytes of the filter
     pub fn total_size(&self) -> u64 {
-        self.metadata_blocks.metadata.total_size_in_bytes
+        self.metadata().total_size_in_bytes
     }
 
     // pub fn get_sum_of_counts(&self) -> u64 {
@@ -451,9 +478,9 @@ impl CountingQuotientFilter<'_> {
     // }
 
     fn quotient_remainder_from_hash(&self, hash: u64) -> (usize, u64) {
-        let quotient = (hash >> self.metadata_blocks.metadata.remainder_bits)
-            & ((1 << self.metadata_blocks.metadata.quotient_bits) - 1);
-        let remainder = hash & ((1 << self.metadata_blocks.metadata.remainder_bits) - 1);
+        let quotient = (hash >> self.metadata().remainder_bits)
+            & ((1 << self.metadata().quotient_bits) - 1);
+        let remainder = hash & ((1 << self.metadata().remainder_bits) - 1);
         (quotient as usize, remainder)
     }
 
@@ -523,13 +550,12 @@ impl CountingQuotientFilter<'_> {
     pub fn insert_by_hash(&self, hash: u64, count: u64) -> Result<(), ()> {
         let (quotient, remainder) = self.calc_qr(hash);
         let runend_index = self.run_end(quotient);
-
+        // let insert_block_index = quotient / 64;
         if self.might_be_empty(quotient) && runend_index == quotient {
             self.set_runend(quotient, true);
             self.set_slot(quotient, remainder);
             self.set_occupied(quotient, true);
-            self.metadata_blocks
-                .metadata
+            self.metadata()
                 .num_occupied_slots
                 .fetch_add(1, Ordering::SeqCst);
             // self.metadata_blocks
@@ -547,6 +573,7 @@ impl CountingQuotientFilter<'_> {
                 self.insert_by_hash(hash, count - 1)?;
             }
         } else {
+            // println!("insert block index: {}", insert_block_index);
             let mut runstart_index = if quotient == 0 {
                 0
             } else {
@@ -660,7 +687,9 @@ impl CountingQuotientFilter<'_> {
                             break;
                         }
 
+                        let old_offset = self.get_block(i).offset;
                         self.get_block_mut(i).offset += 1;
+                        println!("1 offset for block {} was {}, is now {}, original blocks {}", i, old_offset, self.get_block(i).offset, (quotient / 64));
                     }
                 }
                 2 => {
@@ -681,8 +710,9 @@ impl CountingQuotientFilter<'_> {
                         if npreceding_empties == 1 && second / 64 < i {
                             break;
                         }
-
+                        let old_offset = self.get_block(i).offset;
                         self.get_block_mut(i).offset += (ninserts - npreceding_empties) as u16;
+                        println!("2 offset for block {} was {}, is now {}, original blocks {}", i, old_offset, self.get_block(i).offset, (quotient / 64));
                     }
                 }
                 _ => panic!("unexpected number of inserts!"),
@@ -726,8 +756,7 @@ impl CountingQuotientFilter<'_> {
             self.set_count(insert_index + 1, true);
             self.set_slot(insert_index + 1, count);
         }
-        self.metadata_blocks
-            .metadata
+        self.metadata()
             .num_occupied_slots
             .fetch_add(ninserts as i64, Ordering::SeqCst);
     }
@@ -826,14 +855,14 @@ impl CountingQuotientFilter<'_> {
     }
 
     fn calc_qr(&self, hash: u64) -> (usize, u64) {
-        let quotient = (hash >> self.metadata_blocks.metadata.remainder_bits)
-            & ((1 << self.metadata_blocks.metadata.quotient_bits) - 1);
-        let remainder = hash & ((1 << self.metadata_blocks.metadata.remainder_bits) - 1);
+        let quotient = (hash >> self.metadata().remainder_bits)
+            & ((1 << self.metadata().quotient_bits) - 1);
+        let remainder = hash & ((1 << self.metadata().remainder_bits) - 1);
         (quotient as usize, remainder)
     }
 
     pub fn build_hash(&self, quotient: usize, remainder: u64) -> u64 {
-        ((quotient as u64) << self.metadata_blocks.metadata.remainder_bits) | remainder
+        ((quotient as u64) << self.metadata().remainder_bits) | remainder
     }
 
     fn is_occupied(&self, index: usize) -> bool {
@@ -974,25 +1003,25 @@ impl CountingQuotientFilter<'_> {
     // }
 
     fn get_block(&self, block_idx: usize) -> &Block {
-        if block_idx >= self.metadata_blocks.metadata.num_blocks as usize {
+        if block_idx >= self.metadata().num_blocks as usize {
             panic!(
                 "Tried getting block at idx {}, we only have {} blocks",
-                block_idx, self.metadata_blocks.metadata.num_blocks
+                block_idx, self.metadata().num_blocks
             )
         }
-        let t = unsafe { &*self.metadata_blocks.blocks.0.get_unchecked(block_idx).get() };
+        let t = unsafe { &*self.blocks().0.get_unchecked(block_idx).get() };
         return t;
     }
 
     /// Locks must be acquried prior to calling function
     fn get_block_mut(&self, block_idx: usize) -> &mut Block {
-        if block_idx >= self.metadata_blocks.metadata.num_blocks as usize {
+        if block_idx >= self.metadata().num_blocks as usize {
             panic!(
                 "Tried getting block at idx {}, we only have {} blocks",
-                block_idx, self.metadata_blocks.metadata.num_blocks
+                block_idx, self.metadata().num_blocks
             )
         }
-        let t = unsafe { &mut *self.metadata_blocks.blocks.0.get_unchecked(block_idx).get() };
+        let t = unsafe { &mut *self.blocks().0.get_unchecked(block_idx).get() };
         return t;
     }
 }
@@ -1089,5 +1118,118 @@ fn bitmask(nbits: u64) -> u64 {
         u64::MAX
     } else {
         (1 << nbits) - 1
+    }
+}
+
+
+impl<'a> IntoIterator for &'a CountingQuotientFilter {
+    type Item = FilterItem;
+    type IntoIter = CQFIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let mut position = 0;
+        if !self.is_occupied(0) {
+            let mut block_index: usize = 0;
+            let mut idx = bitselect(self.get_block(0).occupieds, 0);
+            if idx == 64 {
+                while idx == 64 && block_index < (self.metadata().num_blocks - 1) as usize {
+                    block_index += 1;
+                    idx = bitselect(self.get_block(block_index).occupieds, 0);
+                }
+            }
+            position = block_index * 64 + idx;
+        }
+
+        CQFIterator {
+            qf: self,
+            position: if position == 0 { 0 } else { self.run_end(position - 1) + 1 },
+            run: position as usize,
+            first: true
+        }
+    }
+}
+
+
+impl<'a> CQFIterator<'a> {
+    fn move_position(&mut self) -> bool {
+        if self.position >= self.qf.metadata().real_num_slots as usize {
+            return false;
+        } else {
+            let (mut current_remainder, mut current_count): (u64, u64) = (0, 0);
+            self.position = self.qf.decode_counter(self.position, &mut current_remainder, &mut current_count);
+            if !self.qf.is_runend(self.position) {
+                self.position += 1;
+                if self.position >= self.qf.metadata().real_num_slots as usize {
+                    return false;
+                }
+                return true;
+            } else {
+                let mut block_idx = self.run / 64;
+                let mut rank = bitrank(self.qf.get_block(block_idx).occupieds, self.run % 64);
+                let mut next_run = bitselect(self.qf.get_block(block_idx).occupieds, rank);
+
+                if next_run == 64 {
+                    rank = 0;
+                    while next_run == 64 && block_idx < (self.qf.metadata().num_blocks - 1) as usize {
+                        block_idx += 1;
+                        next_run = bitselect(self.qf.get_block(block_idx).occupieds, rank);
+                    }
+                }
+
+                if block_idx == self.qf.metadata().num_blocks as usize {
+                    self.run = self.qf.metadata().real_num_slots as usize;
+                    self.position = self.qf.metadata().real_num_slots as usize;
+                    return false;
+                }
+
+                self.run = block_idx * 64 + next_run;
+                self.position += 1;
+                if self.position < self.run {
+                    self.position = self.run;
+                }
+
+                if self.position >= self.qf.metadata().real_num_slots as usize {
+                    return false;
+                }
+
+                return true;
+            }
+        }
+    }
+}
+
+
+pub struct CQFIterator<'a> {
+    qf: &'a CountingQuotientFilter,
+    position: usize,
+    run: usize,
+    first: bool
+}
+
+pub struct FilterItem {
+    pub hash: u64,
+    pub item: Option<u64>,
+    pub count: u64
+}
+
+impl<'a> Iterator for CQFIterator<'a> {
+    type Item = FilterItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.first {
+            self.first = false;
+            let (mut current_remainder, mut current_count): (u64, u64) = (0, 0);
+            self.qf.decode_counter(self.position, &mut current_remainder, &mut current_count);
+            let hash = self.qf.build_hash(self.run, current_remainder);
+            return Some(FilterItem { hash, item: self.qf.invert_hash(hash), count: current_count });
+        }
+        let can_move = self.move_position();
+        if !can_move {
+            return None;
+        }
+        let (mut current_remainder, mut current_count): (u64, u64) = (0, 0);
+        self.qf.decode_counter(self.position, &mut current_remainder, &mut current_count);
+        let hash = self.qf.build_hash(self.run, current_remainder);
+        Some(FilterItem { hash, item: self.qf.invert_hash(hash), count: current_count })
     }
 }
