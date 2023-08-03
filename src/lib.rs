@@ -82,6 +82,8 @@ pub struct CountingQuotientFilter {
     blocks: *mut Blocks,
 }
 
+unsafe impl Sync for CountingQuotientFilter {}
+
 impl Drop for CountingQuotientFilter {
     fn drop(&mut self) {
         let size = self.metadata().total_size_in_bytes;
@@ -681,13 +683,13 @@ impl CountingQuotientFilter {
 
                         let old_offset = self.get_block(i).offset;
                         self.get_block_mut(i).offset += 1;
-                        println!(
-                            "1 offset for block {} was {}, is now {}, original blocks {}",
-                            i,
-                            old_offset,
-                            self.get_block(i).offset,
-                            (quotient / 64)
-                        );
+                        // println!(
+                        //     "1 offset for block {} was {}, is now {}, original blocks {}",
+                        //     i,
+                        //     old_offset,
+                        //     self.get_block(i).offset,
+                        //     (quotient / 64)
+                        // );
                     }
                 }
                 2 => {
@@ -710,13 +712,13 @@ impl CountingQuotientFilter {
                         }
                         let old_offset = self.get_block(i).offset;
                         self.get_block_mut(i).offset += (ninserts - npreceding_empties) as u16;
-                        println!(
-                            "2 offset for block {} was {}, is now {}, original blocks {}",
-                            i,
-                            old_offset,
-                            self.get_block(i).offset,
-                            (quotient / 64)
-                        );
+                        // println!(
+                        //     "2 offset for block {} was {}, is now {}, original blocks {}",
+                        //     i,
+                        //     old_offset,
+                        //     self.get_block(i).offset,
+                        //     (quotient / 64)
+                        // );
                     }
                 }
                 _ => panic!("unexpected number of inserts!"),

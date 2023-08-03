@@ -17,11 +17,11 @@ fn main() {
         numbers.push(rng.gen())
     }
 
-    let now = Instant::now();
-    for i in 0..n_strings {
-        //qf.insert(strings[i].as_bytes(), 3)?;
-        qf.insert((numbers[i]) as u64, 3).expect("insert failed!");
-    }
+    // let now = Instant::now();
+    // for i in 0..n_strings {
+    //     //qf.insert(strings[i].as_bytes(), 3)?;
+    //     qf.insert((numbers[i]) as u64, 3).expect("insert failed!");
+    // }
 
     ///////////////////////////////////////
     // let num_threads = 6;
@@ -47,10 +47,10 @@ fn main() {
     // }
     ////////////////////////////////////////////////
     // let inserts = Arc::new(AtomicI32::new(0));
-    // numbers.par_iter().for_each(|&i| {
-    //     qf.insert(i as u64, 1).expect("insert failed!");
-    //     // inserts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    // });
+    numbers.par_iter().for_each(|&i| {
+        qf.insert(i as u64, 1).expect("insert failed!");
+        // inserts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
 
     // println!("inserted {} elements", inserts.load(std::sync::atomic::Ordering::SeqCst));
     // println!("{n_strings}");
