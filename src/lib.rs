@@ -5,19 +5,19 @@ mod partitioned_counter;
 use blocks::{Block, Blocks};
 use crossbeam::utils::CachePadded;
 use parking_lot::Mutex;
-use rayon::iter::plumbing::{UnindexedProducer, UnindexedConsumer, Consumer};
+use rayon::iter::plumbing::{Consumer, UnindexedConsumer, UnindexedProducer};
 // use partitioned_counter::PartitionedCounter;
+use libc::{
+    c_void, madvise, mmap, munmap, MADV_RANDOM, MAP_ANONYMOUS, MAP_FAILED, MAP_HUGETLB,
+    MAP_PRIVATE, MAP_SHARED, PROT_READ, PROT_WRITE,
+};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
 use std::alloc::{self, Layout};
 use std::fs::OpenOptions;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::ptr::{self, NonNull};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use rayon::prelude::*;
-use libc::{
-    c_void, madvise, mmap, munmap, MADV_RANDOM, MAP_ANONYMOUS, MAP_FAILED, MAP_HUGETLB,
-    MAP_PRIVATE, MAP_SHARED, PROT_READ, PROT_WRITE,
-};
 use std::sync::Arc;
 use std::{
     fs::File,
@@ -90,7 +90,6 @@ pub struct CountingQuotientFilter<'a> {
 }
 
 #[repr(C)]
-
 
 pub enum InsertFlags {
     Test,
@@ -197,7 +196,12 @@ impl CountingQuotientFilter<'_> {
             .unwrap();
         let mut buffered_writer = BufWriter::new(file);
         let size = self.metadata_blocks.metadata.total_size_in_bytes;
-        let buf = unsafe { std::slice::from_raw_parts((&self.metadata_blocks.metadata) as *const _ as *const u8, size as usize) };
+        let buf = unsafe {
+            std::slice::from_raw_parts(
+                (&self.metadata_blocks.metadata) as *const _ as *const u8,
+                size as usize,
+            )
+        };
         match buffered_writer.write_all(buf) {
             Ok(_) => Ok(()),
             Err(_) => Err(()),
@@ -339,7 +343,6 @@ impl CountingQuotientFilter<'_> {
 
         let metadata_blocks = unsafe { &mut *(mm as *mut MetadataBlocks) };
 
-
         let num_locks = metadata_blocks.metadata.real_num_slots / NUM_SLOTS_TO_LOCK + 2;
 
         let mut locks: Vec<CachePadded<Mutex<()>>> = Vec::with_capacity(num_locks as usize);
@@ -424,16 +427,13 @@ impl CountingQuotientFilter<'_> {
             self.decode_counter(runstart_index, &mut current_remainder, &mut current_count);
         while current_remainder < remainder && !self.is_runend(current_end) {
             runstart_index = current_end + 1;
-            current_end = self.decode_counter(
-                runstart_index,
-                &mut current_remainder,
-                &mut current_count,
-            );
+            current_end =
+                self.decode_counter(runstart_index, &mut current_remainder, &mut current_count);
         }
         println!("setting");
         if current_remainder == remainder {
-            if self.is_count(runstart_index+1) {
-                self.set_slot(runstart_index as usize +1, count);
+            if self.is_count(runstart_index + 1) {
+                self.set_slot(runstart_index as usize + 1, count);
                 return Ok(());
             }
             self.insert_and_shift(
@@ -443,15 +443,13 @@ impl CountingQuotientFilter<'_> {
                 count,
                 runstart_index,
                 current_end - runstart_index + 1,
-            ); 
+            );
         } else {
             return Err(()); // error since we didn't find the remainder
         };
-    
+
         Ok(())
     }
-
-    
 
     pub fn get_num_occupied_slots(&self) -> u64 {
         // self.runtimedata.pc_num_occupied_slots.sync();
@@ -610,9 +608,9 @@ impl CountingQuotientFilter<'_> {
                 .num_occupied_slots
                 .fetch_add(1, Ordering::SeqCst);
             // self.metadata_blocks
-                // .metadata
-                // .num_distinct_elts
-                // .fetch_add(1, Ordering::SeqCst);
+            // .metadata
+            // .num_distinct_elts
+            // .fetch_add(1, Ordering::SeqCst);
             // self.metadata_blocks
             //     .metadata
             //     .num_elements
@@ -672,8 +670,6 @@ impl CountingQuotientFilter<'_> {
         // if it's a runend or the next thing is not a count, there's only one
         if self.is_runend(index) || !self.is_count(index + 1) {
             *count = 1;
-
-            
 
             return index;
         } else {
@@ -1077,11 +1073,14 @@ impl CountingQuotientFilter<'_> {
         return t;
     }
 
-    fn clear(&self) {
+    pub fn clear(&self) {
         for i in 0..self.metadata_blocks.metadata.num_blocks as usize {
             self.get_block_mut(i).clear();
         }
-        self.metadata_blocks.metadata.num_occupied_slots.store(0, Ordering::SeqCst);
+        self.metadata_blocks
+            .metadata
+            .num_occupied_slots
+            .store(0, Ordering::SeqCst);
     }
 }
 
@@ -1180,8 +1179,6 @@ fn bitmask(nbits: u64) -> u64 {
     }
 }
 
-
-
 impl<'a> IntoIterator for &'a CountingQuotientFilter<'_> {
     type Item = FilterItem;
     type IntoIter = CQFIterator<'a>;
@@ -1192,7 +1189,9 @@ impl<'a> IntoIterator for &'a CountingQuotientFilter<'_> {
             let mut block_index: usize = 0;
             let mut idx = bitselect(self.get_block(0).occupieds, 0);
             if idx == 64 {
-                while idx == 64 && block_index < (self.metadata_blocks.metadata.num_blocks - 1) as usize {
+                while idx == 64
+                    && block_index < (self.metadata_blocks.metadata.num_blocks - 1) as usize
+                {
                     block_index += 1;
                     idx = bitselect(self.get_block(block_index).occupieds, 0);
                 }
@@ -1237,7 +1236,8 @@ impl<'a> CQFIterator<'a> {
 
                 if next_run == 64 {
                     rank = 0;
-                    while next_run == 64 && block_idx < (self.qf.metadata_blocks.metadata.num_blocks - 1) as usize
+                    while next_run == 64
+                        && block_idx < (self.qf.metadata_blocks.metadata.num_blocks - 1) as usize
                     {
                         block_idx += 1;
                         next_run = bitselect(self.qf.get_block(block_idx).occupieds, rank);
@@ -1269,8 +1269,6 @@ impl<'a> CQFIterator<'a> {
 impl<'a> IntoParallelIterator for &'a CountingQuotientFilter<'_> {
     type Item = FilterItem;
     type Iter = CQFIterator<'a>;
-
-
 
     fn into_par_iter(self) -> Self::Iter {
         return (&self).into_iter();
@@ -1330,7 +1328,6 @@ impl<'a> Iterator for CQFIterator<'a> {
             // println!("asdasdasdasd");
         }
 
-
         Some(FilterItem {
             hash,
             item: self.qf.invert_hash(hash),
@@ -1354,13 +1351,15 @@ impl UnindexedProducer for CQFIterator<'_> {
     type Item = FilterItem;
 
     fn fold_with<F>(self, folder: F) -> F
-        where
-            F: rayon::iter::plumbing::Folder<Self::Item> {
+    where
+        F: rayon::iter::plumbing::Folder<Self::Item>,
+    {
         folder.consume_iter(self)
     }
 
     fn split(self) -> (Self, Option<Self>) {
-        if self.end - self.position <= self.qf.metadata_blocks.metadata.real_num_slots as usize / 2 {
+        if self.end - self.position <= self.qf.metadata_blocks.metadata.real_num_slots as usize / 2
+        {
             return (self, None);
         }
 
@@ -1370,7 +1369,8 @@ impl UnindexedProducer for CQFIterator<'_> {
         // }
 
         // Dont split if it's 1/8th of the size of the cqf
-        if self.end - self.position <= self.qf.metadata_blocks.metadata.real_num_slots as usize / 2 {
+        if self.end - self.position <= self.qf.metadata_blocks.metadata.real_num_slots as usize / 2
+        {
             return (self, None);
         }
         let mut position = mid;
@@ -1378,7 +1378,9 @@ impl UnindexedProducer for CQFIterator<'_> {
             let mut block_index = position / 64;
             let mut index = bitselect(self.qf.get_block(block_index).occupieds, 0);
             if index == 64 {
-                while index == 64 && block_index < self.qf.metadata_blocks.metadata.num_blocks as usize {
+                while index == 64
+                    && block_index < self.qf.metadata_blocks.metadata.num_blocks as usize
+                {
                     block_index += 1;
                     index = bitselect(self.qf.get_block(block_index).occupieds, 0);
                 }
@@ -1387,7 +1389,7 @@ impl UnindexedProducer for CQFIterator<'_> {
         }
 
         let run = position;
-        position = self.qf.run_end(position-1) + 1;
+        position = self.qf.run_end(position - 1) + 1;
         if position < run {
             position = run;
         }
@@ -1401,9 +1403,9 @@ impl UnindexedProducer for CQFIterator<'_> {
         // }
 
         // position = run;
-// asdasdfasd
+        // asdasdfasd
         // println!("occupied position {} {} {}",position, self.qf.is_occupied(position), self.qf.is_runend(position-1));
-        
+
         // println!("Lower bound {}, middle {}, upper {}, Left Id{}, Right Id {}", self.position, run, self.end, self.id, self.id+1);
         // //////////////////////////////////////
         let right = CQFIterator {

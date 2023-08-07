@@ -162,8 +162,6 @@ use std::time::Instant;
 
 const LOGN_SLOTS: u64 = 25;
 
-
-
 fn main() {
     let qf = CountingQuotientFilter::new(LOGN_SLOTS, LOGN_SLOTS, HashMode::Invertible).unwrap();
 
@@ -189,7 +187,7 @@ fn main() {
     println!("count is {}", qf.query(numbers[0]));
     qf.set_count(numbers[0], 2).expect("Failed to set count");
     println!("count is {}", qf.query(numbers[0]));
-    
+
     // Iterator::for_each(qf.into_iter(), |item| {
     //     item_count.fetch_add(item.count as i32, std::sync::atomic::Ordering::SeqCst);
     // });
@@ -203,7 +201,6 @@ fn main() {
     //     unique_strings.insert(numbers[i]);
     // }
 
-
     // println!("Item Count {}, should be {}",item_count.load(std::sync::atomic::Ordering::SeqCst), unique_strings.len());
 
     // for i in 0..n_strings {
@@ -212,10 +209,8 @@ fn main() {
     //     assert!(qf.query((numbers[i]) as u64) > 0);
     // }
 
-    
-
     // qf.print();
-// NOTE offsets may be off by one ??
+    // NOTE offsets may be off by one ??
     ///////////////////////////////////////
     // let num_threads = 6;
     // let numbers = Arc::new(numbers);
