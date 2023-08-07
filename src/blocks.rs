@@ -93,6 +93,16 @@ impl Block {
         }
         return offset_64 - slot + occupieds.count_ones() as u64;
     }
+
+    pub fn clear(&mut self) {
+        self.offset = 0;
+        self.occupieds = 0;
+        self.runends = 0;
+        self.counts = 0;
+        for i in 0..QF_SLOTS_PER_BLOCK {
+            self.remainders[i] = 0;
+        }
+    }
 }
 
 #[repr(C)]
