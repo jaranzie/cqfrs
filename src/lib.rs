@@ -414,7 +414,12 @@ impl CountingQuotientFilter<'_> {
         let lock_index = block_index / blocks_per_lock as usize;
         let mut lock = self.runtimedata.locks[lock_index].lock();
         let mut lock2 = self.runtimedata.locks[lock_index + 1].lock();
-        self.set_count_by_hash(hash, count)
+        match self.set_count_by_hash(hash, count) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                self.insert_by_hash(hash, count)
+            },
+        }
     }
 
     pub fn set_count_by_hash(&self, hash: u64, count: u64) -> Result<(), ()> {
