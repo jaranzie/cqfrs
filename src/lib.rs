@@ -78,7 +78,7 @@ struct Metadata {
     // pub num_elements: AtomicI64,
     // pub num_distinct_elts: AtomicI64,
 }
-
+#[repr(C)]
 struct MetadataBlocks {
     metadata: Metadata,
     blocks: Blocks,
@@ -1363,7 +1363,7 @@ impl UnindexedProducer for CQFIterator<'_> {
     }
 
     fn split(self) -> (Self, Option<Self>) {
-        if self.end - self.position <= self.qf.metadata_blocks.metadata.real_num_slots as usize / 2
+        if self.end - self.position <= self.qf.metadata_blocks.metadata.real_num_slots as usize / 16
         {
             return (self, None);
         }
@@ -1374,10 +1374,10 @@ impl UnindexedProducer for CQFIterator<'_> {
         // }
 
         // Dont split if it's 1/8th of the size of the cqf
-        if self.end - self.position <= self.qf.metadata_blocks.metadata.real_num_slots as usize / 2
-        {
-            return (self, None);
-        }
+        // if self.end - self.position <= self.qf.metadata_blocks.metadata.real_num_slots as usize / 8
+        // {
+        //     return (self, None);
+        // }
         let mut position = mid;
         if !self.qf.is_occupied(position) {
             let mut block_index = position / 64;
