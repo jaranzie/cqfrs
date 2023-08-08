@@ -336,10 +336,10 @@ impl CountingQuotientFilter<'_> {
                 0,
             )
         };
-
         if mm == MAP_FAILED {
             return Err(());
         }
+        unsafe {madvise(mm, total_bytes as usize, MADV_RANDOM)};
 
         let metadata_blocks = unsafe { &mut *(mm as *mut MetadataBlocks) };
 
