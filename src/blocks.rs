@@ -1,35 +1,34 @@
-use std::cell::SyncUnsafeCell;
-
 use super::BlockT;
 use super::QF_SLOTS_PER_BLOCK;
 use super::{bitmask, bitrank, bitselectv, popcntv};
 use bitintr::{Pdep, Popcnt, Tzcnt};
+use std::cell::SyncUnsafeCell;
+
+use crate::{BlockIndex, Quotient, Remainder, SlotIndex};
+
 
 #[repr(C)]
 pub struct Block {
-    pub occupieds: u64,
-    pub runends: u64,
+    occupieds: u64,
+    runends: u64,
     counts: u64,
     remainders: [BlockT; QF_SLOTS_PER_BLOCK],
     pub offset: u16,
-    // occupieds: [u64; QF_METADATA_WORDS_PER_BLOCK],
-    // runends: [u64; QF_METADATA_WORDS_PER_BLOCK],
-    // counts: [u64; QF_METADATA_WORDS_PER_BLOCK],
 }
 
 impl Block {
     #[inline]
-    pub fn flip_occupied(&mut self, slot: usize) {
+    pub fn flip_occupied(&mut self, slot: SlotIndex) {
         self.occupieds ^= 1 << slot;
     }
 
     #[inline]
-    pub fn is_occupied(&self, slot: usize) -> bool {
+    pub fn is_occupied(&self, slot: SlotIndex) -> bool {
         ((self.occupieds >> slot) & 1) != 0
     }
 
-    pub fn set_occupied(&mut self, slot: usize, bit: bool) {
-        if bit {
+    pub fn set_occupied(&mut self, slot: SlotIndex, set: bool) {
+        if set {
             self.occupieds |= 1 << slot;
         } else {
             self.occupieds &= !(1 << slot);
@@ -37,17 +36,17 @@ impl Block {
     }
 
     #[inline]
-    pub fn flip_runend(&mut self, slot: usize) {
+    pub fn flip_runend(&mut self, slot: SlotIndex) {
         self.runends ^= 1 << slot;
     }
 
     #[inline]
-    pub fn is_runend(&self, slot: usize) -> bool {
+    pub fn is_runend(&self, slot: SlotIndex) -> bool {
         ((self.runends >> slot) & 1) != 0
     }
 
-    pub fn set_runend(&mut self, slot: usize, bit: bool) {
-        if bit {
+    pub fn set_runend(&mut self, slot: SlotIndex, set: bool) {
+        if set {
             self.runends |= 1 << slot;
         } else {
             self.runends &= !(1 << slot);
@@ -55,36 +54,46 @@ impl Block {
     }
 
     #[inline]
-    pub fn flip_count(&mut self, slot: usize) {
+    pub fn flip_count(&mut self, slot: SlotIndex) {
         self.counts ^= 1 << slot;
     }
 
     #[inline]
-    pub fn is_count(&self, slot: usize) -> bool {
+    pub fn is_count(&self, slot: SlotIndex) -> bool {
         ((self.counts >> slot) & 1) != 0
     }
 
-    pub fn set_count(&mut self, slot: usize, bit: bool) {
-        if bit {
+    pub fn set_count(&mut self, slot: SlotIndex, set: bool) {
+        if set {
             self.counts |= 1 << slot;
         } else {
             self.counts &= !(1 << slot);
         }
     }
 
-    pub fn set_slot(&mut self, slot: usize, remainder: u64) {
-        self.remainders[slot] = remainder;
+    #[inline]
+    pub fn set_slot(&mut self, slot: SlotIndex, remainder: Remainder) {
+        self.remainders[slot as usize] = remainder;
     }
 
-    pub fn get_slot(&self, slot: usize) -> u64 {
-        self.remainders[slot]
+    #[inline]
+    pub fn get_slot(&self, slot: SlotIndex) -> Remainder {
+        self.remainders[slot as usize]
     }
 
-    pub fn is_empty(&self, slot: usize) -> bool {
-        !self.is_occupied(slot) && !self.is_runend(slot) && !self.is_count(slot)
+    pub fn get_offset(&self) -> u16 {
+        self.offset
     }
 
-    pub fn offset_lower_bound(&self, slot: u64) -> u64 {
+    pub fn set_offset(&mut self, offset: u16) {
+        self.offset = offset;
+    }
+
+    pub fn has_metadata_bits_set(&self, slot: SlotIndex) -> bool {
+        self.is_occupied(slot) || self.is_runend(slot) || self.is_count(slot)
+    }
+
+    pub fn offset_lower_bound(&self, slot: SlotIndex) -> u64 {
         let occupieds = self.occupieds & bitmask(slot + 1);
         let offset_64: u64 = self.offset.into();
         if offset_64 <= slot {
@@ -99,121 +108,152 @@ impl Block {
 pub struct Blocks(pub [SyncUnsafeCell<Block>; 1]);
 
 impl Blocks {
-    pub fn get_block(&self, block_index: usize) -> &Block {
-        unsafe { &*self.0.get_unchecked(block_index).get() }
-    }
-
-    pub fn get_block_mut(&self, block_index: usize) -> &mut Block {
-        unsafe { &mut *self.0.get_unchecked(block_index).get() }
-    }
-
-    pub fn is_empty(&self, block_index: usize, slot_index: usize) -> bool {
-        let block = self.get_block(block_index);
-        !block.is_occupied(slot_index)
-            && !block.is_runend(slot_index)
-            && !block.is_count(slot_index)
-    }
-
-    pub fn is_occupied(&self, block_index: usize, slot_index: usize) -> bool {
-        let block = self.get_block(block_index);
-        block.is_occupied(slot_index)
-    }
-
-    pub fn is_runend(&self, block_index: usize, slot_index: usize) -> bool {
-        let block = self.get_block(block_index);
-        block.is_runend(slot_index)
-    }
-
-    pub fn is_count(&self, block_index: usize, slot_index: usize) -> bool {
-        let block = self.get_block(block_index);
-        block.is_count(slot_index)
-    }
-
-    pub fn set_occupied(&self, block_index: usize, slot_index: usize, bit: bool) {
-        let block = self.get_block_mut(block_index);
-        unsafe { (*block).set_occupied(slot_index, bit) }
-    }
-
-    pub fn set_runend(&self, block_index: usize, slot_index: usize, bit: bool) {
-        let block = self.get_block_mut(block_index);
-        unsafe { (*block).set_runend(slot_index, bit) }
-    }
-
-    pub fn set_count(&self, block_index: usize, slot_index: usize, bit: bool) {
-        let block = self.get_block_mut(block_index);
-        unsafe { (*block).set_count(slot_index, bit) }
-    }
-
-    pub fn set_remainder(&self, block_index: usize, slot_index: usize, remainder: u64) {
-        let block = self.get_block_mut(block_index);
-        unsafe { (*block).set_slot(slot_index, remainder) }
-    }
-
-    pub fn get_remainder(&self, block_index: usize, slot_index: usize) -> u64 {
-        let block = self.get_block(block_index);
-        unsafe { (*block).get_slot(slot_index) }
-    }
-
-    pub fn set_remainder_block(block: &mut Block, slot_index: usize, remainder: u64) {
-        unsafe { (*block).set_slot(slot_index, remainder) }
-    }
-
-    // pub fn get_run_end_index(&self, block_index: usize, slot_index:usize) -> usize {
-    //     let block = self.get_block(block_index);
-    //     let offset = block.offset;
-    //     // Number of occupied slots before current slot
-    //     let current_block_rank = bitrank(block.occupieds, slot_index);
-    //     // if rank == 0 {
-    //     //     return 0;
-    //     // }
-    //     0
+    // pub fn might_be_empty(&self, quotient: Quotient) -> bool {
+    //     let block = self.get_block(quotient);
+    //     return block.is_count(quotient % 64)
+    //         && block.is_occupied(quotient % 64)
+    //         && block.is_runend(quotient % 64);
     // }
+    pub fn get_block(&self, quotient: Quotient) -> &Block {
+        unsafe { &*self.0.get_unchecked(quotient as usize).get() }
+    }
 
-    fn run_end(&self, quotient: usize) -> usize {
-        let block_idx: usize = quotient / 64;
-        let intrablock_offset: usize = quotient % 64;
-        let block = self.get_block_mut(block_idx);
-        let blocks_offset: usize = block.offset.into();
-        let intrablock_rank: usize = bitrank(block.occupieds, intrablock_offset);
+    pub fn get_block_mut(&self, quotient: Quotient) -> &mut Block {
+        unsafe { &mut *self.0.get_unchecked(quotient as usize).get() }
+    }
 
-        if intrablock_rank == 0 {
-            if blocks_offset <= intrablock_offset {
+    pub fn has_metadata_bits_set(&self, quotient: Quotient) -> bool {
+        let block = self.get_block(quotient);
+        block.is_occupied(quotient % 64)
+            && block.is_runend(quotient % 64)
+            && block.is_count(quotient % 64)
+    }
+
+    pub fn is_occupied(&self, quotient: Quotient) -> bool {
+        let block = self.get_block(quotient);
+        block.is_occupied(quotient % 64)
+    }
+
+    pub fn is_runend(&self, quotient: Quotient) -> bool {
+        let block = self.get_block(quotient);
+        block.is_runend(quotient % 64)
+    }
+
+    pub fn is_count(&self, quotient: Quotient) -> bool {
+        let block = self.get_block(quotient);
+        block.is_count(quotient % 64)
+    }
+
+    pub fn set_occupied(&self, quotient: Quotient, bit: bool) {
+        let block = self.get_block_mut(quotient);
+        block.set_occupied(quotient % 64, bit)
+    }
+
+    pub fn set_runend(&self, quotient: Quotient, bit: bool) {
+        let block = self.get_block_mut(quotient);
+        block.set_runend(quotient % 64, bit)
+    }
+
+    pub fn set_count(&self, quotient: Quotient, bit: bool) {
+        let block = self.get_block_mut(quotient);
+        block.set_count(quotient % 64, bit)
+    }
+
+    pub fn flip_count(&self, quotient: Quotient) {
+        let block = self.get_block_mut(quotient);
+        block.flip_count(quotient % 64)
+    }
+
+    pub fn flip_runend(&self, quotient: Quotient) {
+        let block = self.get_block_mut(quotient);
+        block.flip_runend(quotient % 64)
+    }
+
+    pub fn flip_occupied(&self, quotient: Quotient) {
+        let block = self.get_block_mut(quotient);
+        block.flip_occupied(quotient % 64)
+    }
+
+    pub fn set_remainder(&self, quotient: Quotient, remainder: u64) {
+        let block = self.get_block_mut(quotient);
+        (block).set_slot(quotient % 64, remainder)
+    }
+
+    pub fn get_remainder(&self, quotient: Quotient) -> Remainder {
+        let block = self.get_block(quotient);
+        (block).get_slot(quotient % 64)
+    }
+
+    pub fn decode_counter(&self, quotient: Quotient) -> (u64, u64) {
+        let block = self.get_block(quotient);
+        let next_block = self.get_block(quotient + 1);
+        if !next_block.is_count(quotient % 64) || block.is_runend(quotient % 64) {
+            return (quotient + 1, 1);
+        } else {
+            let count = next_block.get_slot(quotient % 64);
+            return (quotient + 2, count);
+        }
+    }
+
+    pub fn find_run_start(&self, quotient: Quotient) -> Quotient {
+        // let block = self.get_block(quotient);
+        // let offset : u64= block.get_offset().into();
+        // if offset <= quotient%64 {
+        //     return quotient;
+        // } else {
+        //     return quotient - offset + 64;
+        // }
+        return self.find_run_end(quotient - 1) + 1;
+    }
+
+    pub fn find_run_end(&self, quotient: Quotient) -> Quotient {
+        let block_idx = quotient / 64;
+        let slot_index = quotient % 64;
+        let offset: u64 = self.get_block(block_idx).offset.into();
+        let num_occupied_before_slot = bitrank(self.get_block(block_idx).occupieds, slot_index);
+
+        // Case where no occupied slots before one we're looking for
+        if num_occupied_before_slot == 0 {
+            // If slot index is outside of offset, return quotient
+            if offset <= slot_index {
                 return quotient;
             } else {
-                return 64 * block_idx + blocks_offset - 1;
+                // Otherwise, quotient is shifted by offset
+                return (block_idx * 64) + offset - 1;
+                // return quotient + offset - 1;
             }
         }
 
-        let mut runend_block_index: usize = block_idx + blocks_offset / 64;
-        let mut runend_ignore_bits: usize = blocks_offset % 64;
-        let mut runend_rank: usize = intrablock_rank - 1;
-        let mut runend_block_offset: usize = bitselectv(
+        let mut runend_block_index = block_idx + offset / 64;
+        let mut runend_ignore_bits = offset % 64;
+        let mut runend_rank = num_occupied_before_slot - 1;
+        let mut runend_block_offset = bitselectv(
             self.get_block(runend_block_index).runends,
             runend_ignore_bits,
             runend_rank,
         );
 
         if runend_block_offset == 64 {
-            if blocks_offset == 0 && intrablock_rank == 0 {
-                return quotient;
-            } else {
-                loop {
-                    runend_rank -= popcntv(
-                        self.get_block(runend_block_index).runends,
-                        runend_ignore_bits,
-                    );
-                    runend_block_index += 1;
-                    runend_ignore_bits = 0;
-                    runend_block_offset = bitselectv(
-                        self.get_block(runend_block_index).runends,
-                        runend_ignore_bits,
-                        runend_rank,
-                    );
-                    if runend_block_offset != 64 {
-                        break;
-                    }
+            // if offset == 0 && num_occupied_before_slot == 0 {
+            //     return quotient;
+            // } else {
+            loop {
+                runend_rank -= popcntv(
+                    self.get_block(runend_block_index).runends,
+                    runend_ignore_bits,
+                );
+                runend_block_index += 1;
+                runend_ignore_bits = 0;
+                runend_block_offset = bitselectv(
+                    self.get_block(runend_block_index).runends,
+                    runend_ignore_bits,
+                    runend_rank,
+                );
+                if runend_block_offset != 64 {
+                    break;
                 }
             }
+            // }
         }
 
         let runend_index = 64 * runend_block_index + runend_block_offset;
@@ -223,61 +263,26 @@ impl Blocks {
             runend_index
         }
     }
-    // I don't think this is correct if runs can cross blocks
-    // pub fn run_end(&self, quotient: usize) -> usize {
-    //     let block_idx: usize = quotient / 64;
-    //     let intrablock_offset: usize = quotient % 64;
-    //     let blocks_offset: usize = self.get_block(block_idx).offset.into();
-    //     let intrablock_rank: usize =
-    //         bitrank(self.get_block(block_idx).occupieds, intrablock_offset);
 
-    //     if intrablock_rank == 0 {
-    //         if blocks_offset <= intrablock_offset {
-    //             return quotient;
-    //         } else {
-    //             return 64 * block_idx + blocks_offset - 1;
-    //         }
-    //     }
+    pub fn get_run_range(&self, quotient: Quotient) -> (Quotient, Quotient) {
+        let run_start = self.find_run_start(quotient);
+        let run_end = self.find_run_end(quotient);
+        return (run_start, run_end);
+    }
 
-    //     let mut runend_block_index: usize = block_idx + blocks_offset / 64;
-    //     let mut runend_ignore_bits: usize = blocks_offset % 64;
-    //     let mut runend_rank: usize = intrablock_rank - 1;
-    //     let mut runend_block_offset: usize = bitselectv(
-    //         self.get_block(runend_block_index).runends,
-    //         runend_ignore_bits,
-    //         runend_rank,
-    //     );
-
-    //     if runend_block_offset == 64 {
-    //         if blocks_offset == 0 && intrablock_rank == 0 {
-    //             return quotient;
-    //         } else {
-    //             loop {
-    //                 runend_rank -= popcntv(
-    //                     self.get_block(runend_block_index).runends,
-    //                     runend_ignore_bits,
-    //                 );
-    //                 runend_block_index += 1;
-    //                 runend_ignore_bits = 0;
-    //                 runend_block_offset = bitselectv(
-    //                     self.get_block(runend_block_index).runends,
-    //                     runend_ignore_bits,
-    //                     runend_rank,
-    //                 );
-    //                 if runend_block_offset != 64 {
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     let runend_index = 64 * runend_block_index + runend_block_offset;
-    //     if runend_index < quotient {
-    //         quotient
-    //     } else {
-    //         runend_index
-    //     }
-    // }
+    /// quotient is assumed to be run start
+    pub fn find_quotient_of_remainder(&self, quotient: Quotient, remainder: Remainder) -> Quotient {
+        let run_start = quotient;
+        let mut current_quotient = run_start;
+        let mut current_remainder = self.get_remainder(run_start);
+        while current_remainder < remainder && !self.is_runend(current_quotient) {
+            if current_remainder == remainder {
+                return current_quotient;
+            }
+            let (next_quotient, count) = self.decode_counter(current_quotient);
+            current_quotient = next_quotient;
+            current_remainder = self.get_remainder(current_quotient);
+        }
+        return current_quotient;
+    }
 }
-
-// Blocks::set_remainder_block(&mut block, slot_index, remainder);

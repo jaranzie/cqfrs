@@ -9,7 +9,7 @@ const LOGN_SLOTS: u64 = 26;
 fn main() {
     let qf = CountingQuotientFilter::new(LOGN_SLOTS, LOGN_SLOTS, HashMode::Invertible).unwrap();
 
-    let n_strings: usize = ((1 << LOGN_SLOTS) as f32 * 0.9) as usize;
+    let n_strings: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.9) as usize;
     let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
 
     let mut rng = rand::thread_rng();
@@ -18,11 +18,30 @@ fn main() {
     }
 
     // let now = Instant::now();
-    // for i in 0..n_strings {
-    //     //qf.insert(strings[i].as_bytes(), 3)?;
-    //     qf.insert((numbers[i]) as u64, 3).expect("insert failed!");
-    // }
+    for i in 0..n_strings {
+        //qf.insert(strings[i].as_bytes(), 3)?;
+        // println!("inserting {}", numbers[i]);
+        qf.insert((numbers[i]) as u64, 1).expect("insert failed!");
+    }
+    let mut item_count = AtomicI32::new(0);
+    // rayon::iter::ParallelIterator::for_each(qf.into_par_iter(), |item| {
 
+    //     item_count.fetch_add(item.count as i32, std::sync::atomic::Ordering::SeqCst);
+
+    // });
+
+    // Iterator::for_each(qf.into_iter(), |option_item| {
+    //     item_count.fetch_add(option_item.count as i32, std::sync::atomic::Ordering::SeqCst);
+    // });
+
+    println!(
+        "Item Count {}, should be {}",
+        item_count.load(std::sync::atomic::Ordering::Relaxed),
+        n_strings
+    );
+
+    // qf.print();
+    // NOTE offsets may be off by one ??
     ///////////////////////////////////////
     // let num_threads = 6;
     // let numbers = Arc::new(numbers);
@@ -47,10 +66,10 @@ fn main() {
     // }
     ////////////////////////////////////////////////
     // let inserts = Arc::new(AtomicI32::new(0));
-    numbers.par_iter().for_each(|&i| {
-        qf.insert(i as u64, 1).expect("insert failed!");
-        // inserts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    });
+    // numbers.par_iter().for_each(|&i| {
+    //     qf.insert(i as u64, 1).expect("insert failed!");
+    //     // inserts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    // });
 
     // println!("inserted {} elements", inserts.load(std::sync::atomic::Ordering::SeqCst));
     // println!("{n_strings}");
@@ -93,13 +112,14 @@ fn main() {
     //         _ => continue,
     //     };
     // }
-    // let mut total_in = 0;
-    // for i in 0..n_strings / 2 {
-    //     //assert!(qf.query(strings[i].as_bytes()) > 0, "false negative!");
-    //     let p = qf.query(numbers[i]);
-    //     total_in += p;
-    //     assert!(qf.query(numbers[i]) > 0, "false negative!");
-    // }
+    let mut total_in = 0;
+    for i in 0..n_strings {
+        //assert!(qf.query(strings[i].as_bytes()) > 0, "false negative!");
+        let p = qf.query(numbers[i]);
+        total_in += p;
+        assert!(qf.query(numbers[i]) > 0, "false negative!");
+    }
+    println!("{} elements present", total_in);
 
     // let mut present: u32 = 0;
     // for i in n_strings / 2..n_strings {
