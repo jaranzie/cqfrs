@@ -85,6 +85,7 @@ impl Block {
     }
 
     pub fn offset_lower_bound(&self, slot: u64) -> u64 {
+
         let occupieds = self.occupieds & bitmask(slot + 1);
         let offset_64: u64 = self.offset.into();
         if offset_64 <= slot {

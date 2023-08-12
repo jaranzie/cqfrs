@@ -1,4 +1,5 @@
 #![feature(sync_unsafe_cell)]
+#![feature(unchecked_math)]
 mod blocks;
 mod partitioned_counter;
 
@@ -341,7 +342,11 @@ impl CountingQuotientFilter<'_> {
         }
         unsafe {madvise(mm, total_bytes as usize, MADV_RANDOM)};
 
+        // println!("File size {}", total_bytes);
+
         let metadata_blocks = unsafe { &mut *(mm as *mut MetadataBlocks) };
+
+        // println!("File size {}", metadata_blocks.metadata.total_size_in_bytes);
 
         let num_locks = metadata_blocks.metadata.real_num_slots / NUM_SLOTS_TO_LOCK + 2;
 
@@ -669,6 +674,56 @@ impl CountingQuotientFilter<'_> {
         Ok(())
     }
 
+    pub fn print(&self) {
+        // let mut run_index = 0;
+        for i in (1<<self.metadata_blocks.metadata.logn_slots)/64..self.metadata_blocks.metadata.num_blocks {
+            let block = self.get_block(i as usize);
+
+            println!("Block {}, offset {}, occupied {}, runend {}, count {}", i, block.offset,
+                block.occupieds.count_ones(), block.runends.count_ones(), block.counts.count_ones()
+            );
+            for j in 0..64 as usize {
+                // if block.is_runend(j) && self.run_end((i * 64 + j as u64) as usize) >= (i * 64 + j as u64) as usize {
+                //     run_index += 1;
+                // }
+                println!(
+                    "Slot {} occupied: {} runend: {} count: {}, remainder: {}, run index {}",
+                    j,
+                    block.is_occupied(j),
+                    block.is_runend(j),
+                    block.is_count(j),
+                    block.get_slot(j),
+                    self.run_end((i * 64 + j as u64) as usize) % 64
+                );
+            }
+            println!("");
+        }
+    }
+
+    pub fn print_offsets(&self) {
+        // let mut run_index = 0;
+        for i in 0..self.metadata_blocks.metadata.num_blocks {
+            let block = self.get_block(i as usize);
+
+            println!("Block {}, offset {}", i, block.offset);
+            // for j in 0..64 as usize {
+            //     // if block.is_runend(j) && self.run_end((i * 64 + j as u64) as usize) >= (i * 64 + j as u64) as usize {
+            //     //     run_index += 1;
+            //     // }
+            //     println!(
+            //         "Slot {} occupied: {} runend: {} count: {}, remainder: {}, run index {}",
+            //         j,
+            //         block.is_occupied(j),
+            //         block.is_runend(j),
+            //         block.is_count(j),
+            //         block.get_slot(j),
+            //         self.run_end((i * 64 + j as u64) as usize) % 64
+            //     );
+            // }
+            // println!("");
+        }
+    }
+
     fn decode_counter(&self, index: usize, remainder: &mut u64, count: &mut u64) -> usize {
         *remainder = self.get_slot(index);
 
@@ -697,8 +752,21 @@ impl CountingQuotientFilter<'_> {
     }
 
     fn offset_lower_bound(&self, index: usize) -> u64 {
+
+        // let block = self.get_block(index / 64);
+        // let slot_offset = index % 64;
+        // let mut block_offset = block.offset;
+        // let mut occupieds = block.occupieds & bitmask(slot_offset as u64);
+
+        // if block_offset as u64 <= slot_offset as u64 {
+        //     let mut runends = (block.runends & bitmask(slot_offset as u64)) >> block_offset;
+        //     return (occupieds.count_ones() - runends.count_ones()) as u64;
+        // }
+        // return block_offset as u64 - slot_offset as u64 + occupieds.count_ones() as u64;
+
         let block_idx = index / 64;
-        let slot = index as u64 % 64;
+        // let slot = index as u64 % 64;
+        let slot = (index % 64) as u64;
         self.get_block(block_idx).offset_lower_bound(slot)
     }
 
@@ -1057,6 +1125,7 @@ impl CountingQuotientFilter<'_> {
 
     fn get_block(&self, block_idx: usize) -> &Block {
         if block_idx >= self.metadata_blocks.metadata.num_blocks as usize {
+            self.print_offsets();
             panic!(
                 "Tried getting block at idx {}, we only have {} blocks",
                 block_idx, self.metadata_blocks.metadata.num_blocks
@@ -1152,12 +1221,15 @@ pub fn invert_hash(item: u64, mode: u32) -> Option<u64> {
 use bitintr::{Pdep, Tzcnt};
 
 fn bitrank(val: u64, pos: usize) -> usize {
-    // if pos == 63 {
-    //     (val & u64::MAX).count_ones() as usize
-    // } else {
-    //     (val & ((2 << pos) - 1)).count_ones() as usize
-    // }
-    (val & (2 << pos) - 1).count_ones() as usize
+    if pos == 63 {
+        (val & u64::MAX).count_ones() as usize
+    } else {
+        (val & ((2 << pos) - 1)).count_ones() as usize
+    }
+    // unsafe{u64::unchecked_sub(2 << pos, 1)};
+    // (val & unsafe{u64::unchecked_sub(2 << pos, 1)}).count_ones() as usize
+    
+    // (val & (2 << pos) - 1).count_ones() as usize
 }
 
 fn popcntv(val: u64, ignore: usize) -> usize {
@@ -1203,7 +1275,7 @@ impl<'a> IntoIterator for &'a CountingQuotientFilter<'_> {
             }
             position = block_index * 64 + idx;
         }
-
+        
         CQFIterator {
             qf: self,
             position: if position == 0 {
@@ -1378,6 +1450,7 @@ impl UnindexedProducer for CQFIterator<'_> {
         // {
         //     return (self, None);
         // }
+        // println!("splitting");
         let mut position = mid;
         if !self.qf.is_occupied(position) {
             let mut block_index = position / 64;
