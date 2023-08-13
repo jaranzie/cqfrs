@@ -6,6 +6,19 @@
 
 // const LOGN_SLOTS: u64 = 26;
 
+struct Test {
+    asd: i32
+}
+
+fn main() {
+    let test: Box<Test> = Box::new(Test { asd: 1 });
+    let ptr: *const Test = &*test;
+    let a: u64 = 12234563456459u64;
+    let bit_masked: u64 = a & u64::from(u16::MAX);
+    let tesst2: u16 = TryFrom::try_from(bit_masked).unwrap();
+    println!("{:?}", tesst2);
+}
+
 // fn main() {
 //     // let qf = CountingQuotientFilter::new(LOGN_SLOTS, LOGN_SLOTS, HashMode::Invertible).unwrap();
 
@@ -154,50 +167,50 @@
 //     // let qf = CountingQuotientFilter::new_file(25,25,HashMode::Invertible, "test.qf".into()).expect("failed to make cqf");
 // }
 
-use cqfrs::{CountingQuotientFilter, HashMode};
-use rand::Rng;
-use rayon::prelude::*;
-use std::fs;
-use std::sync::{atomic::AtomicI32, Arc};
-use std::time::Instant;
+// use cqfrs::{CountingQuotientFilter, HashMode};
+// use rand::Rng;
+// use rayon::prelude::*;
+// use std::fs;
+// use std::sync::{atomic::AtomicI32, Arc};
+// use std::time::Instant;
 
-const LOGN_SLOTS: u64 = 23;
-use xxhash_rust::xxh3::xxh3_64;
-fn main() {
-    // {
-        if fs::metadata("test.qf").is_ok() {
-            fs::remove_file("test.qf").expect("failed to remove file");
-        }
-        {
-            let qf = CountingQuotientFilter::new_file(LOGN_SLOTS, LOGN_SLOTS, HashMode::Invertible, "test.qf".into()).unwrap();
-        }
-        let qf = CountingQuotientFilter::open_file("test.qf".into()).expect("failed to make cqf");
-    // }
-    // {
-    //     let qf = CountingQuotientFilter::open_file("test.qf".into()).expect("failed to make cqf");
-    // } 
-        // qf.clear();
-    let n_strings: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.95) as usize;
-    let mut numbers: Vec<u64> = (0..n_strings as u64).map(|n| xxh3_64(&n.to_le_bytes())).collect();
+// const LOGN_SLOTS: u64 = 23;
+// use xxhash_rust::xxh3::xxh3_64;
+// fn main() {
+//     // {
+//         if fs::metadata("test.qf").is_ok() {
+//             fs::remove_file("test.qf").expect("failed to remove file");
+//         }
+//         {
+//             let qf = CountingQuotientFilter::new_file(LOGN_SLOTS, LOGN_SLOTS, HashMode::Invertible, "test.qf".into()).unwrap();
+//         }
+//         let qf = CountingQuotientFilter::open_file("test.qf".into()).expect("failed to make cqf");
+//     // }
+//     // {
+//     //     let qf = CountingQuotientFilter::open_file("test.qf".into()).expect("failed to make cqf");
+//     // } 
+//         // qf.clear();
+//     let n_strings: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.95) as usize;
+//     let mut numbers: Vec<u64> = (0..n_strings as u64).map(|n| xxh3_64(&n.to_le_bytes())).collect();
 
-    /* let mut rng = rand::thread_rng();
-    for _ in 0..n_strings {
-        numbers.push(rng.gen())
-    } */
+//     /* let mut rng = rand::thread_rng();
+//     for _ in 0..n_strings {
+//         numbers.push(rng.gen())
+//     } */
 
-    // numbers = (0..n_strings as u64).map(|n| xxh3_64(&n.to_le_bytes())).collect();
-    numbers.sort();
+//     // numbers = (0..n_strings as u64).map(|n| xxh3_64(&n.to_le_bytes())).collect();
+//     numbers.sort();
 
-    println!("inserting now...");
-    // let now = Instant::now();
-    for i in 0..n_strings {
-        //qf.insert(strings[i].as_bytes(), 3)?;
-        // println!("inserting {}", numbers[i]);
-        // println!("inserting {}", numbers[i]);
-        qf.insert_by_hash(numbers[i], 1).expect("insert failed!");
-    }
+//     println!("inserting now...");
+//     // let now = Instant::now();
+//     for i in 0..n_strings {
+//         //qf.insert(strings[i].as_bytes(), 3)?;
+//         // println!("inserting {}", numbers[i]);
+//         // println!("inserting {}", numbers[i]);
+//         qf.insert_by_hash(numbers[i], 1).expect("insert failed!");
+//     }
 
-    println!("{}", qf.query_by_hash(numbers[0]));
+//     println!("{}", qf.query_by_hash(numbers[0]));
     
     // let qf = CountingQuotientFilter::new(LOGN_SLOTS, LOGN_SLOTS, HashMode::Invertible).unwrap();
     // qf.clear();
@@ -389,4 +402,4 @@ fn main() {
     // println!("{} elements present", total_in);
 
     // let qf = CountingQuotientFilter::new_file(25,25,HashMode::Invertible, "test.qf".into()).expect("failed to make cqf");
-}
+// }
