@@ -37,6 +37,7 @@ const SLOTS_PER_BLOCK: usize = 64;
 
 struct RuntimeData<Hasher: BuildHasher> {
     pub file: Option<File>,
+    pub in_memory: bool,
     pub hasher: Hasher,
     pub max_occupied_slots: u64,
 }
@@ -49,7 +50,7 @@ struct Metadata {
     pub num_blocks: u64,
     pub quotient_bits: u64,
     pub remainder_bits: u64,
-    pub num_occupied_slots: AtomicI64,
+    pub num_occupied_slots: AtomicU64,
     pub hash_mode: u32,
 }
 // pub struct CountingQuotientFilter<'a, Hasher: BuildHasher> {
@@ -1508,7 +1509,7 @@ impl Metadata {
             num_blocks,
             quotient_bits,
             remainder_bits,
-            num_occupied_slots: AtomicI64::new(0),
+            num_occupied_slots: AtomicU64::new(0),
             hash_mode,
             // hash_mode: hash_mode as u32,
             // metadata_blocks.metadata.num_elements = AtomicI64::new(0);

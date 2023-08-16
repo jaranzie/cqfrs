@@ -2,7 +2,7 @@ use cqfrs::{BuildReversableHasher, CountingQuotientFilter};
 use rand::Rng;
 // use rayon::prelude::*;
 // use std::sync::{atomic::AtomicI32, Arc};
-use std::{time::Instant, collections::HashMap};
+use std::{collections::HashMap, time::Instant};
 
 const LOGN_SLOTS: u64 = 26;
 
@@ -44,8 +44,6 @@ fn main() {
         // let res = qf.query(*k);
         assert_eq!(qf.query(*k).count, *v);
     }
-
-
 
     let elapsed = now.elapsed();
     println!("insert took {} seconds!", elapsed.as_secs());

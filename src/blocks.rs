@@ -1,4 +1,3 @@
-use std::cell::SyncUnsafeCell;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::ops::Index;
@@ -255,10 +254,10 @@ impl<Remainder: Copy + TryFrom<u64>> Blocks<Remainder> {
 
     // I don't think this is correct if runs can cross blocks
     pub fn run_end(&self, quotient: u64) -> u64 {
-        let block_idx: usize = (quotient / SLOTS_PER_BLOCK as u64) as usize;
-        let intrablock_offset: usize = (quotient % SLOTS_PER_BLOCK as u64) as usize;
-        let blocks_offset: usize = self[block_idx].offset.into();
-        let intrablock_rank: usize = bitrank(self[block_idx].occupieds, intrablock_offset);
+        let block_idx = (quotient / SLOTS_PER_BLOCK as u64);
+        let intrablock_offset = (quotient % SLOTS_PER_BLOCK as u64);
+        let blocks_offset: u64 = self[block_idx as usize].offset.into();
+        let intrablock_rank: u64 = bitrank(self[block_idx as usize].occupieds, intrablock_offset);
 
         if intrablock_rank == 0 {
             if blocks_offset <= intrablock_offset {
@@ -268,11 +267,11 @@ impl<Remainder: Copy + TryFrom<u64>> Blocks<Remainder> {
             }
         }
 
-        let mut runend_block_index: usize = block_idx + blocks_offset / 64;
-        let mut runend_ignore_bits: usize = blocks_offset % 64;
-        let mut runend_rank: usize = intrablock_rank - 1;
-        let mut runend_block_offset: usize = bitselectv(
-            self[runend_block_index].runends,
+        let mut runend_block_index = block_idx + blocks_offset / 64;
+        let mut runend_ignore_bits = blocks_offset % 64;
+        let mut runend_rank = intrablock_rank - 1;
+        let mut runend_block_offset = bitselectv(
+            self[runend_block_index as usize].runends,
             runend_ignore_bits,
             runend_rank,
         );
@@ -282,11 +281,14 @@ impl<Remainder: Copy + TryFrom<u64>> Blocks<Remainder> {
                 return quotient;
             } else {
                 loop {
-                    runend_rank -= popcntv(self[runend_block_index].runends, runend_ignore_bits);
+                    runend_rank -= popcntv(
+                        self[runend_block_index as usize].runends,
+                        runend_ignore_bits,
+                    );
                     runend_block_index += 1;
                     runend_ignore_bits = 0;
                     runend_block_offset = bitselectv(
-                        self[runend_block_index].runends,
+                        self[runend_block_index as usize].runends,
                         runend_ignore_bits,
                         runend_rank,
                     );

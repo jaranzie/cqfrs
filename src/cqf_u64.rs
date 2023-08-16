@@ -1,8 +1,8 @@
 use crate::ReversibleHasher;
 type Remainder = u64;
 const SLOTS_PER_BLOCK: usize = 64;
-
-pub struct QueryResult {
+use crate::{bitmask, bitrank, bitselect, bitselectv, popcntv};
+pub struct HashCount {
     pub hash: u64,
     pub count: u64,
 }
@@ -29,6 +29,18 @@ mod blocks {
     }
 
     impl Block {
+        pub fn occupieds(&self) -> u64 {
+            self.occupieds
+        }
+
+        pub fn runends(&self) -> u64 {
+            self.runends
+        }
+
+        pub fn counts(&self) -> u64 {
+            self.counts
+        }
+
         #[inline]
         pub fn slot(&self, slot: usize) -> &Remainder {
             &self.remainders[slot]
@@ -272,10 +284,11 @@ mod blocks {
         }
 
         pub fn run_end(&self, quotient: u64) -> u64 {
-            let block_idx: usize = (quotient / SLOTS_PER_BLOCK as u64) as usize;
-            let intrablock_offset: usize = (quotient % SLOTS_PER_BLOCK as u64) as usize;
-            let blocks_offset: usize = self[block_idx].offset.into();
-            let intrablock_rank: usize = bitrank(self[block_idx].occupieds, intrablock_offset);
+            let block_idx: u64 = (quotient / SLOTS_PER_BLOCK as u64);
+            let intrablock_offset: u64 = (quotient % SLOTS_PER_BLOCK as u64);
+            let blocks_offset: u64 = self[block_idx as usize].offset.into();
+            let intrablock_rank: u64 =
+                bitrank(self[block_idx as usize].occupieds, intrablock_offset);
 
             if intrablock_rank == 0 {
                 if blocks_offset <= intrablock_offset {
@@ -285,11 +298,11 @@ mod blocks {
                 }
             }
 
-            let mut runend_block_index: usize = block_idx + blocks_offset / 64;
-            let mut runend_ignore_bits: usize = blocks_offset % 64;
-            let mut runend_rank: usize = intrablock_rank - 1;
-            let mut runend_block_offset: usize = bitselectv(
-                self[runend_block_index].runends,
+            let mut runend_block_index: u64 = block_idx + blocks_offset / 64;
+            let mut runend_ignore_bits: u64 = blocks_offset % 64;
+            let mut runend_rank: u64 = intrablock_rank - 1;
+            let mut runend_block_offset: u64 = bitselectv(
+                self[runend_block_index as usize].runends,
                 runend_ignore_bits,
                 runend_rank,
             );
@@ -299,12 +312,14 @@ mod blocks {
                     return quotient;
                 } else {
                     loop {
-                        runend_rank -=
-                            popcntv(self[runend_block_index].runends, runend_ignore_bits);
+                        runend_rank -= popcntv(
+                            self[runend_block_index as usize].runends,
+                            runend_ignore_bits,
+                        );
                         runend_block_index += 1;
                         runend_ignore_bits = 0;
                         runend_block_offset = bitselectv(
-                            self[runend_block_index].runends,
+                            self[runend_block_index as usize].runends,
                             runend_ignore_bits,
                             runend_rank,
                         );
@@ -350,6 +365,7 @@ use libc::{
     MAP_PRIVATE, MAP_SHARED, PROT_READ, PROT_WRITE,
 };
 use parking_lot::Mutex;
+use std::cmp::min;
 use std::fs::OpenOptions;
 use std::hash::{self, BuildHasher, Hasher};
 use std::os::fd::AsRawFd;
@@ -424,6 +440,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
             blocks,
             metadata,
             runtimedata: Box::new(RuntimeData {
+                in_memory: true,
                 hasher,
                 file: None,
                 max_occupied_slots: (metadata.real_num_slots as f64 * 0.95) as u64,
@@ -439,9 +456,9 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
     }
 
     // Result<QueryResult, CqfError>
-    pub fn query(&self, item: u64) -> QueryResult {
+    pub fn query(&self, item: u64) -> HashCount {
         let hash = self.calc_hash(item);
-        QueryResult {
+        HashCount {
             hash,
             count: self.query_by_hash(hash),
         }
@@ -661,6 +678,10 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
         Ok(())
     }
 
+    pub fn build_hash(&self, quotient: u64, remainder: u64) -> u64 {
+        ((quotient as u64) << self.metadata.remainder_bits) | remainder
+    }
+
     fn find_first_empty_slot(&self, mut from: u64) -> u64 {
         loop {
             let t = self.blocks.offset_lower_bound(from);
@@ -784,7 +805,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
         }
         self.metadata
             .num_occupied_slots
-            .fetch_add(ninserts as i64, Ordering::SeqCst);
+            .fetch_add(ninserts, Ordering::SeqCst);
     }
 
     pub fn query_by_hash(&self, hash: u64) -> u64 {
@@ -871,5 +892,407 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
         };
 
         Ok(())
+    }
+}
+
+impl<'a, 'b, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hasher> {
+
+    /// Merges a and b into a in memory cqf
+    pub fn merge(a: &Self, b: &Self) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
+        let (larger, smaller) = if a.metadata.num_occupied_slots.load(Ordering::Relaxed)
+            > b.metadata.num_occupied_slots.load(Ordering::Relaxed)
+        {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let mut new_cqf: CountingQuotientFilter<'a, Hasher>;
+        if larger.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
+            + smaller.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
+            > larger.max_occupied_slots()
+        {
+            new_cqf = CountingQuotientFilter::new(
+                larger.metadata.logn_slots + 1,
+                larger.metadata.logn_slots + 1,
+                larger.metadata.quotient_bits + larger.metadata.remainder_bits,
+                larger.metadata.invertable(),
+                larger.runtimedata.hasher.clone(),
+            )?;
+        } else {
+            new_cqf = CountingQuotientFilter::new(
+                larger.metadata.logn_slots,
+                larger.metadata.quotient_bits,
+                larger.metadata.remainder_bits,
+                larger.metadata.invertable(),
+                larger.runtimedata.hasher.clone(),
+            )?;
+        }
+
+        Self::merge_into(a, b, &mut new_cqf);
+        // not sure if this works
+        return Ok(new_cqf);
+
+        Err(CqfError::FileError)
+    }
+
+    fn merge_into(a: &Self, b: &Self, new_cqf: &mut Self) {
+        let mut iter_a = a.into_iter();
+        let mut iter_b = b.into_iter();
+        // let mut current_a = iter_a.next();
+        // let mut current_b = iter_b.next();
+        let mut next_a = iter_a.next();
+        let mut next_b = iter_b.next();
+        let mut a_val: HashCount;
+        let mut b_val: HashCount;
+        let mut merged_current_quotient = 0u64;
+        if next_a.is_some() && next_b.is_some() {
+            a_val = next_a.unwrap();
+            b_val = next_b.unwrap();
+            next_a = iter_a.next();
+            next_b = iter_b.next();
+
+            
+            loop {
+                let (a_quotient, a_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
+                let (b_quotient, b_remainder) = new_cqf.quotient_remainder_from_hash(b_val.hash);
+                // bring merged quotient index up to the quotient that we're inserting
+                if merged_current_quotient < min(a_quotient, b_quotient) {
+                    merged_current_quotient = min(a_quotient, b_quotient);
+                }
+                if a_quotient == b_quotient {
+                    new_cqf.blocks.set_occupied(a_quotient, true);
+                    if a_remainder == b_remainder {
+                        let count = a_val.count + b_val.count;
+                        new_cqf.blocks.set_count(a_quotient+1, true);
+                        new_cqf.blocks.set_slot(a_quotient, a_remainder);
+                        new_cqf.blocks.set_slot(a_quotient+1, count);
+                        new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+                        merged_current_quotient += 2;
+                        // check runend
+                        let inserted_quotient = a_quotient;
+                        // current_a = iter_a.next();
+                        // current_b = iter_b.next();
+                        if next_a.is_none() && next_b.is_none() {
+                            new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+                            break;
+                        } else if next_a.is_none() {
+                            b_val = next_b.unwrap();
+                            next_b = iter_b.next();
+                            let next_quotient = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
+                            if next_quotient != inserted_quotient {
+                                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+                            }
+                            continue;
+                        } else if next_b.is_none() {
+                            a_val = next_a.unwrap();
+                            next_a = iter_a.next();
+                            let next_quotient = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
+                            if next_quotient != inserted_quotient {
+                                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+                            }
+                            continue;
+                        } else {
+                            a_val = next_a.unwrap();
+                            b_val = next_b.unwrap();
+                            next_a = iter_a.next();
+                            next_b = iter_b.next();
+                            let next_quotient_a = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
+                            let next_quotient_b = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
+                            if inserted_quotient != min(next_quotient_a, next_quotient_b) {
+                                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+                            }
+                            continue;
+                        }
+                        // continue;
+                    } else if a_remainder < b_remainder {
+                        new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
+                        if a_val.count != 1 {
+                            new_cqf.blocks.set_count(merged_current_quotient+1, true);
+                            new_cqf.blocks.set_slot(merged_current_quotient+1, a_val.count);
+                            merged_current_quotient += 2;
+                            new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+                        } else {
+                            merged_current_quotient += 1;
+                            new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+                        }
+                        // check runend - not need because we know one quotient is equal
+                        if next_a.is_none() {
+                            break;
+                        }
+                        a_val = next_a.unwrap();
+                        next_a = iter_a.next();
+                    } else { // b_remainder < a_remainder
+                        new_cqf.blocks.set_slot(merged_current_quotient, b_remainder);
+                        if b_val.count != 1 {
+                            new_cqf.blocks.set_count(merged_current_quotient+1, true);
+                            new_cqf.blocks.set_slot(merged_current_quotient+1, b_val.count);
+                            merged_current_quotient += 2;
+                            new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+                        } else {
+                            merged_current_quotient += 1;
+                            new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+                        }
+                        // check runend - not need because we know one quotient is equal
+                        if next_b.is_none() {
+                            break;
+                        }
+                        b_val = next_b.unwrap();
+                        next_b = iter_b.next();
+                    }   
+                } else if a_quotient < b_quotient {
+                    // can maybe turn this into while loop to improve speed
+                    new_cqf.blocks.set_occupied(a_quotient, true);
+                    new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
+                    if a_val.count != 1 {
+                        new_cqf.blocks.set_count(merged_current_quotient+1, true);
+                        new_cqf.blocks.set_slot(merged_current_quotient+1, a_val.count);
+                        merged_current_quotient += 2;
+                        new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+                    } else {
+                        merged_current_quotient += 1;
+                        new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+                    }
+                    // check runend
+                    let inserted_quotient = a_quotient;
+                    if next_a.is_none() {
+                        break;
+                    }
+                    a_val = next_a.unwrap();
+                    next_a = iter_a.next();
+
+                    let next_quotient = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
+                    if next_quotient != inserted_quotient {
+                        new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+                    }
+                } else { // b_quotient < a_quotient
+                    new_cqf.blocks.set_occupied(b_quotient, true);
+                    new_cqf.blocks.set_slot(merged_current_quotient, b_remainder);
+                    if b_val.count != 1 {
+                        new_cqf.blocks.set_count(merged_current_quotient+1, true);
+                        new_cqf.blocks.set_slot(merged_current_quotient+1, b_val.count);
+                        merged_current_quotient += 2;
+                        new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+                    } else {
+                        merged_current_quotient += 1;
+                        new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+                    }
+                    // check runend
+                    let inserted_quotient = b_quotient;
+                    if next_b.is_none() {
+                        break;
+                    }
+                    b_val = next_b.unwrap();
+                    next_b = iter_b.next();
+                    let next_quotient = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
+                    if next_quotient != inserted_quotient {
+                        new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+                    }
+                }
+            }
+        } else if next_b.is_none() {
+            a_val = next_a.unwrap();
+            b_val = HashCount {hash: 0, count: 0};
+            next_a = iter_a.next();
+        } else if next_a.is_none() {
+            b_val = next_b.unwrap();
+            a_val = HashCount {hash: 0, count: 0};
+            next_b = iter_b.next();
+        } else {
+            // both empty
+            return;          
+        }
+
+        while next_a.is_none() && next_b.is_some() {
+            let (b_quotient, b_remainder) = new_cqf.quotient_remainder_from_hash(b_val.hash);
+            new_cqf.blocks.set_occupied(b_quotient, true);
+            new_cqf.blocks.set_slot(merged_current_quotient, b_remainder);
+            if b_val.count != 1 {
+                new_cqf.blocks.set_count(merged_current_quotient+1, true);
+                new_cqf.blocks.set_slot(merged_current_quotient+1, b_val.count);
+                merged_current_quotient += 2;
+                new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+            } else {
+                merged_current_quotient += 1;
+                new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+            }
+            // check runend
+            let inserted_quotient = b_quotient;
+            if next_b.is_none() {
+                break;
+            }
+            b_val = next_b.unwrap();
+            next_b = iter_b.next();
+            let next_quotient = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
+            if next_quotient != inserted_quotient {
+                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+            }
+        }
+
+        while next_a.is_some() && next_b.is_none() {
+            let (a_quotient, a_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
+            new_cqf.blocks.set_occupied(a_quotient, true);
+            new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
+            if a_val.count != 1 {
+                new_cqf.blocks.set_count(merged_current_quotient+1, true);
+                new_cqf.blocks.set_slot(merged_current_quotient+1, a_val.count);
+                merged_current_quotient += 2;
+                new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+            } else {
+                merged_current_quotient += 1;
+                new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+            }
+            // check runend
+            let inserted_quotient = a_quotient;
+            if next_a.is_none() {
+                break;
+            }
+            a_val = next_a.unwrap();
+            next_a = iter_a.next();
+            let next_quotient = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
+            if next_quotient != inserted_quotient {
+                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+            }
+        }
+    }
+}
+
+impl<'a, Hasher: BuildHasher> IntoIterator for &'a CountingQuotientFilter<'a, Hasher> {
+    type Item = HashCount;
+    type IntoIter = CQFIterator<'a, Hasher>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let mut position: u64 = 0;
+        if !self.blocks.is_occupied(0) {
+            let mut block_index: u64 = 0;
+            let mut idx = bitselect(self.blocks[0].occupieds(), 0);
+            if idx == 64 {
+                while idx == 64 && block_index < (self.metadata.num_blocks - 1) {
+                    block_index += 1;
+                    idx = bitselect(self.blocks[block_index as usize].occupieds(), 0);
+                }
+            }
+            position = block_index * 64 + idx;
+        }
+
+        CQFIterator {
+            qf: self,
+            position: if position == 0 {
+                0
+            } else {
+                self.blocks.run_end(position - 1) + 1
+            },
+            end: self.metadata.real_num_slots,
+            run: position,
+            first: true,
+        }
+    }
+}
+
+// pub struct CQFIterator<'a> {
+//     qf: &'a CountingQuotientFilter,
+//     position: usize,
+//     end: usize,
+//     run: usize,
+//     first: bool,
+// }
+
+impl<'a, Hasher: BuildHasher> CQFIterator<'a, Hasher> {
+    fn move_position(&mut self) -> bool {
+        if self.position >= self.qf.metadata.real_num_slots {
+            return false;
+        } else {
+            let (mut current_remainder, mut current_count): (u64, u64) = (0, 0);
+            self.position = self.qf.blocks.decode_counter(
+                self.position,
+                &mut current_remainder,
+                &mut current_count,
+            );
+            if !self.qf.blocks.is_runend(self.position) {
+                self.position += 1;
+                if self.position >= self.qf.metadata.real_num_slots {
+                    return false;
+                }
+                return true;
+            } else {
+                let mut block_idx = self.run / 64;
+                let mut rank = bitrank(
+                    self.qf.blocks[block_idx as usize].occupieds(),
+                    self.run % 64,
+                );
+                let mut next_run = bitselect(self.qf.blocks[block_idx as usize].occupieds(), rank);
+
+                if next_run == 64 {
+                    rank = 0;
+                    while next_run == 64 && block_idx < (self.qf.metadata.num_blocks - 1) {
+                        block_idx += 1;
+                        next_run = bitselect(self.qf.blocks[block_idx as usize].occupieds(), rank);
+                    }
+                }
+
+                if block_idx == self.qf.metadata.num_blocks {
+                    self.run = self.qf.metadata.real_num_slots;
+                    self.position = self.qf.metadata.real_num_slots;
+                    return false;
+                }
+
+                self.run = block_idx * 64 + next_run;
+                self.position += 1;
+                if self.position < self.run {
+                    self.position = self.run;
+                }
+
+                if self.position >= self.qf.metadata.real_num_slots {
+                    return false;
+                }
+
+                return true;
+            }
+        }
+    }
+}
+
+pub struct CQFIterator<'a, Hasher: BuildHasher> {
+    qf: &'a CountingQuotientFilter<'a, Hasher>,
+    position: u64,
+    end: u64,
+    run: u64,
+    first: bool,
+}
+
+impl<'a, Hasher: BuildHasher> Iterator for CQFIterator<'a, Hasher> {
+    type Item = HashCount;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.first {
+            self.first = false;
+            let (mut current_remainder, mut current_count): (u64, u64) = (0, 0);
+            self.qf.blocks.decode_counter(
+                self.position,
+                &mut current_remainder,
+                &mut current_count,
+            );
+            let hash = self.qf.build_hash(self.run, current_remainder);
+            return Some(HashCount {
+                hash,
+                count: current_count,
+            });
+        }
+        let can_move = self.move_position();
+        if !can_move {
+            return None;
+        }
+        if self.position >= self.end {
+            println!("position: {}, end: {}", self.position, self.end);
+            return None;
+        }
+        let (mut current_remainder, mut current_count): (u64, u64) = (0, 0);
+        self.qf
+            .blocks
+            .decode_counter(self.position, &mut current_remainder, &mut current_count);
+        let hash = self.qf.build_hash(self.run, current_remainder);
+        Some(HashCount {
+            hash,
+            count: current_count,
+        })
     }
 }
