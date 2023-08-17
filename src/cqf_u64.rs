@@ -557,7 +557,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
         self.metadata.total_size_in_bytes
     }
 
-    fn quotient_remainder_from_hash(&self, hash: u64) -> (u64, Remainder) {
+    pub fn quotient_remainder_from_hash(&self, hash: u64) -> (u64, Remainder) {
         let quotient =
             (hash >> self.metadata.remainder_bits) & ((1 << self.metadata.quotient_bits) - 1);
         let mut remainder = hash & ((1 << self.metadata.remainder_bits) - 1);
@@ -577,21 +577,21 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
             println!("Block {}, offset {}, occupied {}, runend {}, count {}", i, block.offset(),
                 block.occupieds().count_ones(), block.runends().count_ones(), block.counts().count_ones()
             );
-            // for j in 0..64 as usize {
-            //     // if block.is_runend(j) && self.run_end((i * 64 + j as u64) as usize) >= (i * 64 + j as u64) as usize {
-            //     //     run_index += 1;
-            //     // }
-            //     println!(
-            //         "Slot {} occupied: {} runend: {} count: {}, remainder: {}, run index {}",
-            //         j,
-            //         block.is_occupied(j),
-            //         block.is_runend(j),
-            //         block.is_count(j),
-            //         block.get_slot(j),
-            //         self.blocks.run_end((i * 64 + j as u64)) % 64
-            //     );
-            // }
-            // println!("");
+            for j in 0..64 as usize {
+                // if block.is_runend(j) && self.run_end((i * 64 + j as u64) as usize) >= (i * 64 + j as u64) as usize {
+                //     run_index += 1;
+                // }
+                println!(
+                    "Slot {} occupied: {} runend: {} count: {}, remainder: {}, run index {}",
+                    j,
+                    block.is_occupied(j),
+                    block.is_runend(j),
+                    block.is_count(j),
+                    block.get_slot(j),
+                    self.blocks.run_end((i * 64 + j as u64)) % 64
+                );
+            }
+            println!("");
         }
     }
 
@@ -971,30 +971,32 @@ impl<'a, 'b, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, H
 
             
             loop {
-                println!("a_val {} b_val {}", a_val.hash, b_val.hash);
                 let (a_quotient, a_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
                 let (b_quotient, b_remainder) = new_cqf.quotient_remainder_from_hash(b_val.hash);
-                println!("starting: a_q {} a_r {} b_q {} b_r {}", a_quotient, a_remainder, b_quotient, b_remainder);
                 // bring merged quotient index up to the quotient that we're inserting
-                if merged_current_quotient < min(a_quotient, b_quotient) {
-                    println!("merging up to {} from {}", min(a_quotient, b_quotient), merged_current_quotient);
-                    merged_current_quotient = min(a_quotient, b_quotient);
-                }
 
                 let insert_quotient = min(a_quotient, b_quotient);
-                if merged_current_quotient > insert_quotient {
+                if merged_current_quotient < insert_quotient {
+                    merged_current_quotient = insert_quotient;
+                } else if merged_current_quotient > insert_quotient {
                     let end_of_insert = if a_quotient == b_quotient {
-                        merged_current_quotient + 1
+                        merged_current_quotient + 1 // need this slot and another
                     } else if (a_quotient < b_quotient && a_val.count > 1) || (b_quotient < a_quotient && b_val.count > 1) {
-                        merged_current_quotient + 1
+                        merged_current_quotient + 1 // also need this slot and another
                     }  else {
-                        merged_current_quotient
+                        merged_current_quotient // just need this slot
                     };
-                    let qblock_idx = insert_quotient / SLOTS_PER_BLOCK as u64;
+                    //The block it should be in
+                    let quotient_block_idx = insert_quotient / SLOTS_PER_BLOCK as u64;
+                    // The block we're inserting into
                     let insert_block_idx = end_of_insert / SLOTS_PER_BLOCK as u64;
-                    for i in (qblock_idx+1)..=insert_block_idx {
+                    for i in (quotient_block_idx+1)..insert_block_idx {
                         println!("setting offset for block {} eoi {}", i, end_of_insert % SLOTS_PER_BLOCK as u64);
-                        new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+                        // new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+                        new_cqf.blocks.set_offset(insert_block_idx * SLOTS_PER_BLOCK as u64, (SLOTS_PER_BLOCK) as u16);
+                    }
+                    if quotient_block_idx+1 <= insert_block_idx {
+                        new_cqf.blocks.set_offset(insert_block_idx * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
                     }
                 }
 
@@ -1002,9 +1004,9 @@ impl<'a, 'b, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, H
                     new_cqf.blocks.set_occupied(a_quotient, true);
                     if a_remainder == b_remainder {
                         let count = a_val.count + b_val.count;
-                        new_cqf.blocks.set_count(a_quotient+1, true);
-                        new_cqf.blocks.set_slot(a_quotient, a_remainder);
-                        new_cqf.blocks.set_slot(a_quotient+1, count);
+                        new_cqf.blocks.set_count(merged_current_quotient+1, true);
+                        new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
+                        new_cqf.blocks.set_slot(merged_current_quotient+1, count);
                         new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
                         merged_current_quotient += 2;
                         // check runend
@@ -1436,10 +1438,10 @@ impl<'a, Hasher: BuildHasher> Iterator for CQFIterator<'a, Hasher> {
         if !can_move {
             return None;
         }
-        // if self.position >= self.end {
-        //     // println!("position: {}, end: {} id: {}", self.position, self.end, self.id);
-        //     return None;
-        // }
+        if self.position >= self.end {
+            // println!("position: {}, end: {} id: {}", self.position, self.end, self.id);
+            return None;
+        }
         let (mut current_remainder, mut current_count): (u64, u64) = (0, 0);
         self.qf
             .blocks

@@ -99,13 +99,20 @@ fn main() {
     //     // assert_eq!(res, item.count * 2);
     //     // assert_eq!(item.count, *uniques.get(&ReversibleHasher::invert_hash(item.hash)).unwrap() * 2);
     // }
-
-    qf3.print();
+    // println!("qf1");
+    // qf.print();
+    // println!("qf2");
+    // qf2.print();
+    // println!("qf3");
+    // qf3.print();
 
     for item in qf3.into_iter() {
         count += item.count;
-        let res = qf.query_by_hash(item.hash);
-        let res2 = qf2.query_by_hash(item.hash);
+        let (q,r) = qf3.quotient_remainder_from_hash(item.hash);
+        println!("item hash {} count {}", item.hash, item.count);
+        println!("q {} r {}", q, r);
+        // let res = qf.query_by_hash(item.hash);
+        // let res2 = qf2.query_by_hash(item.hash);
         // assert_eq!(res + res2, *uniques.get(&ReversibleHasher::invert_hash(item.hash)).unwrap());
         // assert_eq!(res, item.count * 2);
         // assert_eq!(item.count, *uniques.get(&ReversibleHasher::invert_hash(item.hash)).unwrap() * 2);
