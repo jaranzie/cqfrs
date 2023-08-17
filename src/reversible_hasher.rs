@@ -11,7 +11,7 @@ impl ReversibleHasher {
         ReversibleHasher { hash: 0 }
     }
 
-    fn invert_hash(hash: u64) {
+    pub fn invert_hash(hash: u64) -> u64 {
         let mut tmp: u64;
         let mut key = hash;
 
@@ -44,6 +44,8 @@ impl ReversibleHasher {
         tmp = !(key.wrapping_sub(tmp << 21));
         tmp = !(key.wrapping_sub(tmp << 21));
         key = !(key.wrapping_sub(tmp << 21));
+
+        key
     }
 }
 
@@ -61,7 +63,7 @@ impl Hasher for ReversibleHasher {
     }
 
     fn write(&mut self, bytes: &[u8]) {
-        for byte in bytes {
+        for byte in bytes.into_iter().rev() {
             self.hash = unsafe { self.hash.unchecked_shl(8) };
             self.hash |= *byte as u64;
         }

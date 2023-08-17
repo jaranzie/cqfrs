@@ -1,10 +1,12 @@
-use cqfrs::{BuildReversableHasher, CountingQuotientFilter};
+use cqfrs::{BuildReversableHasher, ReversibleHasher, CountingQuotientFilter};
 use rand::Rng;
+mod numbers;
+use numbers::numbers;
 // use rayon::prelude::*;
 // use std::sync::{atomic::AtomicI32, Arc};
 use std::{collections::HashMap, time::Instant};
 
-const LOGN_SLOTS: u64 = 26;
+const LOGN_SLOTS: u64 = 12;
 
 struct Test {
     asd: i32,
@@ -20,30 +22,101 @@ fn main() {
     )
     .unwrap();
 
-    let n_strings: usize = ((1 << LOGN_SLOTS) as f32 * 0.9) as usize;
-    let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
+    // let n_strings: usize = ((1 << 10)) as usize;
+    // // let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
 
-    let mut rng = rand::thread_rng();
-    for _ in 0..n_strings {
-        numbers.push(rng.gen())
-    }
+    // for i in 0..n_strings/2 {
+    //     //qf.insert(strings[i].as_bytes(), 3)?;
+    //     // println!("inserting {}", numbers[i]);
+    //     qf.insert(numbers[i] as u64, 1).expect("insert failed!");
+    // }
+
+    // for i in (n_strings/2)..n_strings {
+    //     //qf.insert(strings[i].as_bytes(), 3)?;
+    //     // println!("inserting {}", numbers[i]);
+    //     if numbers[i] == 15751518071769981098 {
+    //         qf.print();
+    //     }
+    //     qf.insert(numbers[i] as u64, 1).expect("insert failed!");
+    // }
+
+    let mut qf2 =  CountingQuotientFilter::new(
+        LOGN_SLOTS,
+        LOGN_SLOTS,
+        64,
+        true,
+        BuildReversableHasher::default(),
+    )
+    .unwrap();
+
+    // let n_strings: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.9) as usize;
+    let n_strings: usize = ((1 << 10)) as usize;
+    // let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
+
+    
+
+    // let mut rng = rand::thread_rng();
+    // for _ in 0..n_strings {
+    //     numbers.push(rng.gen())
+    // }
+
+    // println!("{:?}", numbers.clone());
 
     let now = Instant::now();
-    for i in 0..n_strings {
+    for i in 0..n_strings/2 {
         //qf.insert(strings[i].as_bytes(), 3)?;
         // println!("inserting {}", numbers[i]);
         qf.insert(numbers[i] as u64, 1).expect("insert failed!");
+        // qf2.insert(numbers[i] as u64, 1).expect("insert failed!");
     }
+
+    for i in (n_strings/2)..n_strings {
+        //qf.insert(strings[i].as_bytes(), 3)?;
+        // println!("inserting {}", numbers[i]);
+        qf2.insert(numbers[i] as u64, 1).expect("insert failed!");
+    }
+    println!("inserted {} elements", n_strings);
+    let qf3 = CountingQuotientFilter::merge(&qf, &qf2).unwrap();
 
     let mut uniques: HashMap<u64, u64> = HashMap::new();
     for i in 0..n_strings {
         uniques.insert(numbers[i], 1);
     }
 
-    for (k, v) in uniques.iter() {
-        // let res = qf.query(*k);
-        assert_eq!(qf.query(*k).count, *v);
+    let mut count = 0;
+
+    // for (k, v) in uniques.iter() {
+    //     let res = qf.query(*k);
+    //     assert_eq!(res.count, *v);
+    //     count += res.count;
+    // }
+
+    // for item in qf.into_iter() {
+    //     count += item.count;
+    //     // let res = qf.query_by_hash(item.hash);
+    //     // let res2 = qf2.query_by_hash(item.hash);
+    //     // assert_eq!(res + res2, *uniques.get(&ReversibleHasher::invert_hash(item.hash)).unwrap());
+    //     // assert_eq!(res, item.count * 2);
+    //     // assert_eq!(item.count, *uniques.get(&ReversibleHasher::invert_hash(item.hash)).unwrap() * 2);
+    // }
+
+    qf3.print();
+
+    for item in qf3.into_iter() {
+        count += item.count;
+        let res = qf.query_by_hash(item.hash);
+        let res2 = qf2.query_by_hash(item.hash);
+        // assert_eq!(res + res2, *uniques.get(&ReversibleHasher::invert_hash(item.hash)).unwrap());
+        // assert_eq!(res, item.count * 2);
+        // assert_eq!(item.count, *uniques.get(&ReversibleHasher::invert_hash(item.hash)).unwrap() * 2);
     }
+
+    
+
+    println!("count is {}", count);
+    println!("should be {}", n_strings);
+
+    // qf.print();
 
     let elapsed = now.elapsed();
     println!("insert took {} seconds!", elapsed.as_secs());
