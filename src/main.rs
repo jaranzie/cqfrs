@@ -1,7 +1,9 @@
 use cqfrs::{BuildReversableHasher, ReversibleHasher, CountingQuotientFilter};
 use rand::Rng;
-mod numbers;
-use numbers::numbers;
+mod numbers2;
+use numbers2::numbers;
+// mod numbers;
+// use numbers::numbers;
 // use rayon::prelude::*;
 // use std::sync::{atomic::AtomicI32, Arc};
 use std::{collections::HashMap, time::Instant};
@@ -23,6 +25,7 @@ fn main() {
     .unwrap();
 
     // let n_strings: usize = ((1 << 10)) as usize;
+    let n_strings: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.9) as usize;
     // // let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
 
     // for i in 0..n_strings/2 {
@@ -49,8 +52,8 @@ fn main() {
     )
     .unwrap();
 
-    // let n_strings: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.9) as usize;
-    let n_strings: usize = ((1 << 10)) as usize;
+    
+    // let n_strings: usize = ((1 << 10)) as usize;
     // let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
 
     
@@ -60,6 +63,7 @@ fn main() {
     //     numbers.push(rng.gen())
     // }
 
+    // println!("{:?}", numbers.clone());
     // println!("{:?}", numbers.clone());
 
     let now = Instant::now();
@@ -86,7 +90,7 @@ fn main() {
     let mut count = 0;
 
     // for (k, v) in uniques.iter() {
-    //     let res = qf.query(*k);
+    //     let res = qf .query(*k);
     //     assert_eq!(res.count, *v);
     //     count += res.count;
     // }
@@ -106,14 +110,24 @@ fn main() {
     // println!("qf3");
     // qf3.print();
 
+    // return;
+
     for item in qf3.into_iter() {
+        // if item.hash == 18436274101972007539 {
+        //     println!("total count {}", count);
+        //     println!("item hash {} count {}", item.hash, item.count);
+        //     // break;
+        // }
         count += item.count;
-        let (q,r) = qf3.quotient_remainder_from_hash(item.hash);
-        println!("item hash {} count {}", item.hash, item.count);
-        println!("q {} r {}", q, r);
+        // let (q,r) = qf3.quotient_remainder_from_hash(item.hash);
+        // println!("item hash {} count {}", item.hash, item.count);
+        // println!("q {} q2 {} r {}", q/64, q%64, r);
         // let res = qf.query_by_hash(item.hash);
         // let res2 = qf2.query_by_hash(item.hash);
-        // assert_eq!(res + res2, *uniques.get(&ReversibleHasher::invert_hash(item.hash)).unwrap());
+        // assert_eq!(res + res2, item.count);
+        // if res + res2 != item.count {
+        //     println!("SOMETHINGS BROKEN");
+        // }
         // assert_eq!(res, item.count * 2);
         // assert_eq!(item.count, *uniques.get(&ReversibleHasher::invert_hash(item.hash)).unwrap() * 2);
     }

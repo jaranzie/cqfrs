@@ -582,13 +582,13 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
                 //     run_index += 1;
                 // }
                 println!(
-                    "Slot {} occupied: {} runend: {} count: {}, remainder: {}, run index {}",
+                    "Slot {} occupied: {} runend: {} count: {}, remainder: {}, run index ",
                     j,
                     block.is_occupied(j),
                     block.is_runend(j),
                     block.is_count(j),
                     block.get_slot(j),
-                    self.blocks.run_end((i * 64 + j as u64)) % 64
+                    // self.blocks.run_end((i * 64 + j as u64)) % 64
                 );
             }
             println!("");
@@ -751,7 +751,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
                         if empty / 64 < i {
                             break;
                         }
-                        println!("setting offset for block");
+                        // println!("setting offset for block");
                         self.blocks
                             .set_offset(i*64, self.blocks.offset(i*64) + 1);
                     }
@@ -913,7 +913,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
     }
 }
 
-impl<'a, 'b, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hasher> {
+impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hasher> {
 
     /// Merges a and b into a in memory cqf
     pub fn merge(a: &Self, b: &Self) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
@@ -953,247 +953,480 @@ impl<'a, 'b, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, H
         Err(CqfError::FileError)
     }
 
+    // Returns current_quotient-1 if both are None
+    fn next_quotient(&self, a: &Option<HashCount>, b: &Option<HashCount>, current_quotient: u64) -> u64 {
+        match (a, b) {
+            (Some(a_val), Some(b_val)) => {
+                let a_quotient = self.quotient_remainder_from_hash(a_val.hash).0;
+                let b_quotient = self.quotient_remainder_from_hash(b_val.hash).0;
+                if a_quotient < b_quotient {
+                    a_quotient
+                } else {
+                    b_quotient
+                }
+            }
+            (Some(a_val), None) => self.quotient_remainder_from_hash(a_val.hash).0,
+            (None, Some(b_val)) => self.quotient_remainder_from_hash(b_val.hash).0,
+            (None, None) => current_quotient-1,
+        }
+    }
+
     fn merge_into(a: &Self, b: &Self, new_cqf: &mut Self) {
         let mut iter_a = a.into_iter();
         let mut iter_b = b.into_iter();
-        // let mut current_a = iter_a.next();
-        // let mut current_b = iter_b.next();
-        let mut next_a = iter_a.next();
-        let mut next_b = iter_b.next();
-        let mut a_val: HashCount;
-        let mut b_val: HashCount;
-        let mut merged_current_quotient = 0u64;
-        if next_a.is_some() && next_b.is_some() {
-            a_val = next_a.unwrap();
-            b_val = next_b.unwrap();
-            next_a = iter_a.next();
-            next_b = iter_b.next();
+        
+        let mut current_a = iter_a.next();
+        let mut current_b = iter_b.next();
+
+        let mut merged_cqf_current_quotient = 0u64;
+        while current_a.is_some() && current_b.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let insert_count: u64;
+            let next_quotient: u64;
+            {
+                let (a_quotient, a_remainder);
+                let (b_quotient, b_remainder);
+                let a_count;
+                let b_count;
+                {
+                    let a_val = current_a.as_ref().unwrap();
+                    let b_val = current_b.as_ref().unwrap();
+                    (a_quotient, a_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
+                    (b_quotient, b_remainder) = new_cqf.quotient_remainder_from_hash(b_val.hash);
+                    a_count = a_val.count;
+                    b_count = b_val.count;
+                }
+                if a_quotient == b_quotient {
+                    insert_count = a_count + b_count;
+                    insert_quotient = a_quotient;
+                    insert_remainder = a_remainder;
+                    current_a = iter_a.next();
+                    current_b = iter_b.next();
+                } else if a_quotient < b_quotient {
+                    insert_count = a_count;
+                    insert_quotient = a_quotient;
+                    insert_remainder = a_remainder;
+                    current_a = iter_a.next();
+                    // current_b = Some(b_val);
+                } else {
+                    insert_count = b_count;
+                    insert_quotient = b_quotient;
+                    insert_remainder = b_remainder;
+                    current_b = iter_b.next();
+                }
+                next_quotient = new_cqf.next_quotient(&current_a, &current_b, insert_quotient);
+            }
+
+            new_cqf.merge_insert(&mut merged_cqf_current_quotient, insert_quotient, next_quotient, insert_remainder, insert_count);
 
             
-            loop {
-                let (a_quotient, a_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
-                let (b_quotient, b_remainder) = new_cqf.quotient_remainder_from_hash(b_val.hash);
-                // bring merged quotient index up to the quotient that we're inserting
 
-                let insert_quotient = min(a_quotient, b_quotient);
-                if merged_current_quotient < insert_quotient {
-                    merged_current_quotient = insert_quotient;
-                } else if merged_current_quotient > insert_quotient {
-                    let end_of_insert = if a_quotient == b_quotient {
-                        merged_current_quotient + 1 // need this slot and another
-                    } else if (a_quotient < b_quotient && a_val.count > 1) || (b_quotient < a_quotient && b_val.count > 1) {
-                        merged_current_quotient + 1 // also need this slot and another
-                    }  else {
-                        merged_current_quotient // just need this slot
-                    };
-                    //The block it should be in
-                    let quotient_block_idx = insert_quotient / SLOTS_PER_BLOCK as u64;
-                    // The block we're inserting into
-                    let insert_block_idx = end_of_insert / SLOTS_PER_BLOCK as u64;
-                    for i in (quotient_block_idx+1)..insert_block_idx {
-                        println!("setting offset for block {} eoi {}", i, end_of_insert % SLOTS_PER_BLOCK as u64);
-                        // new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
-                        new_cqf.blocks.set_offset(insert_block_idx * SLOTS_PER_BLOCK as u64, (SLOTS_PER_BLOCK) as u16);
-                    }
-                    if quotient_block_idx+1 <= insert_block_idx {
-                        new_cqf.blocks.set_offset(insert_block_idx * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
-                    }
-                }
 
-                if a_quotient == b_quotient {
-                    new_cqf.blocks.set_occupied(a_quotient, true);
-                    if a_remainder == b_remainder {
-                        let count = a_val.count + b_val.count;
-                        new_cqf.blocks.set_count(merged_current_quotient+1, true);
-                        new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
-                        new_cqf.blocks.set_slot(merged_current_quotient+1, count);
-                        new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
-                        merged_current_quotient += 2;
-                        // check runend
-                        let inserted_quotient = a_quotient;
-                        // current_a = iter_a.next();
-                        // current_b = iter_b.next();
-                        if next_a.is_none() && next_b.is_none() {
-                            new_cqf.blocks.set_runend(merged_current_quotient-1, true);
-                            break;
-                        } else if next_a.is_none() {
-                            b_val = next_b.unwrap();
-                            next_b = iter_b.next();
-                            let next_quotient = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
-                            if next_quotient != inserted_quotient {
-                                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
-                            }
-                            continue;
-                        } else if next_b.is_none() {
-                            a_val = next_a.unwrap();
-                            next_a = iter_a.next();
-                            let next_quotient = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
-                            if next_quotient != inserted_quotient {
-                                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
-                            }
-                            continue;
-                        } else {
-                            a_val = next_a.unwrap();
-                            b_val = next_b.unwrap();
-                            next_a = iter_a.next();
-                            next_b = iter_b.next();
-                            let next_quotient_a = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
-                            let next_quotient_b = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
-                            if inserted_quotient != min(next_quotient_a, next_quotient_b) {
-                                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
-                            }
-                            continue;
-                        }
-                        // continue;
-                    } else if a_remainder < b_remainder {
-                        new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
-                        if a_val.count != 1 {
-                            new_cqf.blocks.set_count(merged_current_quotient+1, true);
-                            new_cqf.blocks.set_slot(merged_current_quotient+1, a_val.count);
-                            merged_current_quotient += 2;
-                            new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
-                        } else {
-                            merged_current_quotient += 1;
-                            new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
-                        }
-                        // check runend - not need because we know one quotient is equal
-                        if next_a.is_none() {
-                            break;
-                        }
-                        a_val = next_a.unwrap();
-                        next_a = iter_a.next();
-                    } else { // b_remainder < a_remainder
-                        new_cqf.blocks.set_slot(merged_current_quotient, b_remainder);
-                        if b_val.count != 1 {
-                            new_cqf.blocks.set_count(merged_current_quotient+1, true);
-                            new_cqf.blocks.set_slot(merged_current_quotient+1, b_val.count);
-                            merged_current_quotient += 2;
-                            new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
-                        } else {
-                            merged_current_quotient += 1;
-                            new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
-                        }
-                        // check runend - not need because we know one quotient is equal
-                        if next_b.is_none() {
-                            break;
-                        }
-                        b_val = next_b.unwrap();
-                        next_b = iter_b.next();
-                    }   
-                } else if a_quotient < b_quotient {
-                    // can maybe turn this into while loop to improve speed
-                    new_cqf.blocks.set_occupied(a_quotient, true);
-                    new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
-                    if a_val.count != 1 {
-                        new_cqf.blocks.set_count(merged_current_quotient+1, true);
-                        new_cqf.blocks.set_slot(merged_current_quotient+1, a_val.count);
-                        merged_current_quotient += 2;
-                        new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
-                    } else {
-                        merged_current_quotient += 1;
-                        new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
-                    }
-                    // check runend
-                    let inserted_quotient = a_quotient;
-                    if next_a.is_none() {
-                        break;
-                    }
-                    a_val = next_a.unwrap();
-                    next_a = iter_a.next();
+        }
 
-                    let next_quotient = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
-                    if next_quotient != inserted_quotient {
-                        new_cqf.blocks.set_runend(merged_current_quotient-1, true);
-                    }
-                } else { // b_quotient < a_quotient
-                    new_cqf.blocks.set_occupied(b_quotient, true);
-                    new_cqf.blocks.set_slot(merged_current_quotient, b_remainder);
-                    if b_val.count != 1 {
-                        new_cqf.blocks.set_count(merged_current_quotient+1, true);
-                        new_cqf.blocks.set_slot(merged_current_quotient+1, b_val.count);
-                        merged_current_quotient += 2;
-                        new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
-                    } else {
-                        merged_current_quotient += 1;
-                        new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
-                    }
-                    // check runend
-                    let inserted_quotient = b_quotient;
-                    if next_b.is_none() {
-                        break;
-                    }
-                    b_val = next_b.unwrap();
-                    next_b = iter_b.next();
-                    let next_quotient = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
-                    if next_quotient != inserted_quotient {
-                        new_cqf.blocks.set_runend(merged_current_quotient-1, true);
-                    }
-                }
-            }
-        } else if next_b.is_none() {
-            a_val = next_a.unwrap();
-            b_val = HashCount {hash: 0, count: 0};
-            next_a = iter_a.next();
-        } else if next_a.is_none() {
-            b_val = next_b.unwrap();
-            a_val = HashCount {hash: 0, count: 0};
-            next_b = iter_b.next();
+        let (mut current_remaining, mut remaining_iter) = if current_a.is_some() {
+            (current_a, iter_a)
         } else {
-            // both empty
-            return;          
+            (current_b, iter_b)
+        };
+
+        // finish inserts
+        while current_remaining.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let insert_count: u64;
+            let next_quotient: u64;
+            {
+                let (r_quotient, r_remainder);
+                let r_count;
+                {
+                    let a_val = current_remaining.as_ref().unwrap();
+                    (r_quotient, r_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
+                    r_count = a_val.count;
+                }
+                insert_count = r_count;
+                insert_quotient = r_quotient;
+                insert_remainder = r_remainder;
+                current_remaining = remaining_iter.next();
+                next_quotient = new_cqf.next_quotient(&current_remaining, &None, insert_quotient);
+            }
+            new_cqf.merge_insert(&mut merged_cqf_current_quotient, insert_quotient, next_quotient, insert_remainder, insert_count);
         }
 
-        while next_a.is_none() && next_b.is_some() {
-            let (b_quotient, b_remainder) = new_cqf.quotient_remainder_from_hash(b_val.hash);
-            new_cqf.blocks.set_occupied(b_quotient, true);
-            new_cqf.blocks.set_slot(merged_current_quotient, b_remainder);
-            if b_val.count != 1 {
-                new_cqf.blocks.set_count(merged_current_quotient+1, true);
-                new_cqf.blocks.set_slot(merged_current_quotient+1, b_val.count);
-                merged_current_quotient += 2;
-                new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
-            } else {
-                merged_current_quotient += 1;
-                new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
-            }
-            // check runend
-            let inserted_quotient = b_quotient;
-            if next_b.is_none() {
-                break;
-            }
-            b_val = next_b.unwrap();
-            next_b = iter_b.next();
-            let next_quotient = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
-            if next_quotient != inserted_quotient {
-                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
-            }
+        // let mut next_a = iter_a.next();
+        // let mut next_b = iter_b.next();
+        // let mut a_val: HashCount;
+        // let mut b_val: HashCount;
+        // let mut merged_current_quotient = 0u64;
+        // if next_a.is_some() && next_b.is_some() {
+        //     a_val = next_a.unwrap();
+        //     b_val = next_b.unwrap();
+        //     next_a = iter_a.next();
+        //     next_b = iter_b.next();
+
+            
+        //     loop {
+        //         println!("a_val.hash {} b_val.hash {}", a_val.hash, b_val.hash);
+        //         if a_val.hash == 18434435674472268681 || b_val.hash == 18439001763117887336 {
+        //             println!("a_val.hash {} b_val.hash {}", a_val.hash, b_val.hash);
+        //         }
+
+        //         let (a_quotient, a_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
+        //         let (b_quotient, b_remainder) = new_cqf.quotient_remainder_from_hash(b_val.hash);
+        //         // bring merged quotient index up to the quotient that we're inserting
+
+        //         let insert_quotient = min(a_quotient, b_quotient);
+        //         if merged_current_quotient < insert_quotient {
+        //             merged_current_quotient = insert_quotient;
+        //         } else if merged_current_quotient > insert_quotient {
+        //             let end_of_insert = if a_quotient == b_quotient {
+        //                 merged_current_quotient + 1 // need this slot and another
+        //             } else if (a_quotient < b_quotient && a_val.count > 1) || (b_quotient < a_quotient && b_val.count > 1) {
+        //                 merged_current_quotient + 1 // also need this slot and another
+        //             }  else {
+        //                 merged_current_quotient // just need this slot
+        //             };
+        //             //The block it should be in
+        //             let quotient_block_idx = insert_quotient / SLOTS_PER_BLOCK as u64;
+        //             // The block we're inserting into
+        //             let insert_block_idx = end_of_insert / SLOTS_PER_BLOCK as u64;
+        //             for i in (quotient_block_idx+1)..insert_block_idx {
+        //                 println!("setting offset for block {} eoi {}", i, end_of_insert % SLOTS_PER_BLOCK as u64);
+        //                 // new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+        //                 new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, (SLOTS_PER_BLOCK) as u16);
+        //             }
+        //             if quotient_block_idx+1 <= insert_block_idx {
+        //                 new_cqf.blocks.set_offset(insert_block_idx * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+        //             }
+        //         }
+
+        //         if a_quotient == b_quotient {
+        //             new_cqf.blocks.set_occupied(a_quotient, true);
+        //             if a_remainder == b_remainder {
+        //                 let count = a_val.count + b_val.count;
+        //                 new_cqf.blocks.set_count(merged_current_quotient+1, true);
+        //                 new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
+        //                 new_cqf.blocks.set_slot(merged_current_quotient+1, count);
+        //                 new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+        //                 merged_current_quotient += 2;
+        //                 // check runend
+        //                 let inserted_quotient = a_quotient;
+        //                 // current_a = iter_a.next();
+        //                 // current_b = iter_b.next();
+        //                 if next_a.is_none() && next_b.is_none() {
+        //                     new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //                     // println!("breaking");
+        //                     break; // all done
+        //                 } else if next_a.is_none() {
+        //                     b_val = next_b.unwrap();
+        //                     next_b = iter_b.next();
+        //                     let next_quotient = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
+        //                     if next_quotient != inserted_quotient {
+        //                         new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //                     }
+        //                     // continue;
+        //                     println!("breaking");
+        //                     // break;
+        //                 } else if next_b.is_none() {
+        //                     a_val = next_a.unwrap();
+        //                     next_a = iter_a.next();
+        //                     let next_quotient = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
+        //                     if next_quotient != inserted_quotient {
+        //                         new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //                     }
+        //                     // println!("breaking");
+        //                     break;
+        //                     // continue;
+        //                 } else {
+        //                     a_val = next_a.unwrap();
+        //                     b_val = next_b.unwrap();
+        //                     next_a = iter_a.next();
+        //                     next_b = iter_b.next();
+        //                     let next_quotient_a = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
+        //                     let next_quotient_b = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
+        //                     if inserted_quotient != min(next_quotient_a, next_quotient_b) {
+        //                         new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //                     }
+        //                     continue;
+        //                 }
+        //                 // continue;
+        //             } else if a_remainder < b_remainder {
+        //                 new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
+        //                 if a_val.count != 1 {
+        //                     new_cqf.blocks.set_count(merged_current_quotient+1, true);
+        //                     new_cqf.blocks.set_slot(merged_current_quotient+1, a_val.count);
+        //                     merged_current_quotient += 2;
+        //                     new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+        //                 } else {
+        //                     merged_current_quotient += 1;
+        //                     new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+        //                 }
+        //                 // check runend - not need because we know one quotient is equal
+        //                 if next_a.is_none() {
+        //                     // println!("breaking");
+        //                     break;
+        //                 }
+        //                 a_val = next_a.unwrap();
+        //                 next_a = iter_a.next();
+        //             } else { // b_remainder < a_remainder
+        //                 new_cqf.blocks.set_slot(merged_current_quotient, b_remainder);
+        //                 if b_val.count != 1 {
+        //                     new_cqf.blocks.set_count(merged_current_quotient+1, true);
+        //                     new_cqf.blocks.set_slot(merged_current_quotient+1, b_val.count);
+        //                     merged_current_quotient += 2;
+        //                     new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+        //                 } else {
+        //                     merged_current_quotient += 1;
+        //                     new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+        //                 }
+        //                 // check runend - not need because we know one quotient is equal
+        //                 if next_b.is_none() {
+        //                     new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //                     break;
+        //                 }
+        //                 b_val = next_b.unwrap();
+        //                 next_b = iter_b.next();
+        //             }   
+        //         } else if a_quotient < b_quotient {
+        //             // can maybe turn this into while loop to improve speed
+        //             new_cqf.blocks.set_occupied(a_quotient, true);
+        //             new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
+        //             if a_val.count != 1 {
+        //                 new_cqf.blocks.set_count(merged_current_quotient+1, true);
+        //                 new_cqf.blocks.set_slot(merged_current_quotient+1, a_val.count);
+        //                 merged_current_quotient += 2;
+        //                 new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+        //             } else {
+        //                 merged_current_quotient += 1;
+        //                 new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+        //             }
+        //             // check runend
+        //             let inserted_quotient = a_quotient;
+        //             // if next_a.is_none() {
+        //             //     new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //             //     break;
+        //             // }
+        //             a_val = next_a.unwrap();
+        //             next_a = iter_a.next();
+        //             if next_a.is_none() {
+        //                 new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //                 break;
+        //             }
+        //             let next_quotient = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
+        //             if next_quotient != inserted_quotient {
+        //                 new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //             }
+        //         } else { // b_quotient < a_quotient
+        //             new_cqf.blocks.set_occupied(b_quotient, true);
+        //             new_cqf.blocks.set_slot(merged_current_quotient, b_remainder);
+        //             if b_val.count != 1 {
+        //                 new_cqf.blocks.set_count(merged_current_quotient+1, true);
+        //                 new_cqf.blocks.set_slot(merged_current_quotient+1, b_val.count);
+        //                 merged_current_quotient += 2;
+        //                 new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+        //             } else {
+        //                 merged_current_quotient += 1;
+        //                 new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+        //             }
+        //             // check runend
+        //             let inserted_quotient = b_quotient;
+        //             // if next_b.is_none() {
+        //             //     new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //             //     // println!("breaking");
+        //             //     break;
+        //             // }
+        //             b_val = next_b.unwrap();
+        //             next_b = iter_b.next();
+        //             if next_b.is_none() {
+        //                 new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //                 // println!("breaking");
+        //                 break;
+        //             }
+        //             let next_quotient = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
+        //             if next_quotient != inserted_quotient {
+        //                 new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //             }
+        //         }
+        //     }
+        // } else if next_b.is_none() {
+        //     a_val = next_a.unwrap();
+        //     b_val = HashCount {hash: 0, count: 0};
+        //     next_a = iter_a.next();
+        // } else if next_a.is_none() {
+        //     b_val = next_b.unwrap();
+        //     a_val = HashCount {hash: 0, count: 0};
+        //     next_b = iter_b.next();
+        // } else {
+        //     // both empty
+        //     return;          
+        // }
+
+        // // let next_quotient = if next_b.is_some() {
+        // //     new_cqf.quotient_remainder_from_hash(b_val.hash).0
+        // // } else {
+        // //     new_cqf.quotient_remainder_from_hash(a_val.hash).0
+        // // };
+
+
+        // let mut cont = false;
+        // while (next_a.is_none() && next_b.is_some()) || cont {
+        //     cont = false;
+        //     let (b_quotient, b_remainder) = new_cqf.quotient_remainder_from_hash(b_val.hash);
+
+        //     {
+        //         let insert_quotient = b_quotient;
+        //         if merged_current_quotient < insert_quotient {
+        //             merged_current_quotient = insert_quotient;
+        //         } else if merged_current_quotient > insert_quotient {
+        //             let end_of_insert = if b_val.count > 1 {
+        //                 merged_current_quotient + 1 // also need this slot and another
+        //             }  else {
+        //                 merged_current_quotient // just need this slot
+        //             };
+        //             //The block it should be in
+        //             let quotient_block_idx = insert_quotient / SLOTS_PER_BLOCK as u64;
+        //             // The block we're inserting into
+        //             let insert_block_idx = end_of_insert / SLOTS_PER_BLOCK as u64;
+        //             for i in (quotient_block_idx+1)..insert_block_idx {
+        //                 // println!("setting offset for block {} eoi {}", i, end_of_insert % SLOTS_PER_BLOCK as u64);
+        //                 // new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+        //                 new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, (SLOTS_PER_BLOCK) as u16);
+        //             }
+        //             if quotient_block_idx+1 <= insert_block_idx {
+        //                 new_cqf.blocks.set_offset(insert_block_idx * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+        //             }
+        //         }
+        //     }
+
+        //     new_cqf.blocks.set_occupied(b_quotient, true);
+        //     new_cqf.blocks.set_slot(merged_current_quotient, b_remainder);
+        //     if b_val.count != 1 {
+        //         new_cqf.blocks.set_count(merged_current_quotient+1, true);
+        //         new_cqf.blocks.set_slot(merged_current_quotient+1, b_val.count);
+        //         merged_current_quotient += 2;
+        //         new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+        //     } else {
+        //         merged_current_quotient += 1;
+        //         new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+        //     }
+        //     // check runend
+        //     let inserted_quotient = b_quotient;
+        //     if next_b.is_none() {
+        //         new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //         break;
+        //     }
+        //     b_val = next_b.unwrap();
+        //     let next_quotient = new_cqf.quotient_remainder_from_hash(b_val.hash).0;
+        //     if next_quotient != inserted_quotient {
+        //         new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+        //     }
+        //     next_b = iter_b.next();
+        //     if next_b.is_none() {
+        //         cont = true;
+        //     }
+        // }
+
+    //     while (next_a.is_some() && next_b.is_none()) || cont {
+    //         cont = false;
+    //         let (a_quotient, a_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
+
+    //         // set offsets
+    //         {
+    //             let insert_quotient = a_quotient;
+    //             if merged_current_quotient < insert_quotient {
+    //                 merged_current_quotient = insert_quotient;
+    //             } else if merged_current_quotient > insert_quotient {
+    //                 let end_of_insert = if a_val.count > 1 {
+    //                     merged_current_quotient + 1 // also need this slot and another
+    //                 }  else {
+    //                     merged_current_quotient // just need this slot
+    //                 };
+    //                 //The block it should be in
+    //                 let quotient_block_idx = insert_quotient / SLOTS_PER_BLOCK as u64;
+    //                 // The block we're inserting into
+    //                 let insert_block_idx = end_of_insert / SLOTS_PER_BLOCK as u64;
+    //                 for i in (quotient_block_idx+1)..insert_block_idx {
+    //                     // println!("setting offset for block {} eoi {}", i, end_of_insert % SLOTS_PER_BLOCK as u64);
+    //                     // new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+    //                     new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, (SLOTS_PER_BLOCK) as u16);
+    //                 }
+    //                 if quotient_block_idx+1 <= insert_block_idx {
+    //                     new_cqf.blocks.set_offset(insert_block_idx * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+    //                 }
+    //             }
+    //         }
+
+
+    //         new_cqf.blocks.set_occupied(a_quotient, true);
+    //         new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
+    //         if a_val.count != 1 {
+    //             new_cqf.blocks.set_count(merged_current_quotient+1, true);
+    //             new_cqf.blocks.set_slot(merged_current_quotient+1, a_val.count);
+    //             merged_current_quotient += 2;
+    //             new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+    //         } else {
+    //             merged_current_quotient += 1;
+    //             new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+    //         }
+    //         // check runend
+    //         let inserted_quotient = a_quotient;
+    //         if next_a.is_none() {
+    //             new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+    //             break;
+    //         }
+    //         a_val = next_a.unwrap();
+    //         let next_quotient = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
+    //         if next_quotient != inserted_quotient {
+    //             new_cqf.blocks.set_runend(merged_current_quotient-1, true);
+    //         }
+    //         next_a = iter_a.next();
+    //         if next_a.is_none() {
+    //             cont = true;
+    //         }
+            
+    //     }
+    // }
+    }
+
+    fn merge_insert(&mut self, current_quotient: &mut u64, new_quotient: u64, next_quotient: u64, new_remainder: Remainder, count: u64) {
+        self.blocks.set_occupied(new_quotient, true);
+
+        if *current_quotient < new_quotient {
+            *current_quotient = new_quotient;
+        } 
+        // else if *current_quotient > new_quotient {
+            
+        // }
+
+        self.blocks.set_slot(*current_quotient, new_remainder);
+        if count != 1 {
+            self.blocks.set_count(*current_quotient+1, true);
+            self.blocks.set_slot(*current_quotient+1, count);
+            self.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
+            *current_quotient += 2;
+        } else {
+            self.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
+            *current_quotient += 1;
         }
 
-        while next_a.is_some() && next_b.is_none() {
-            let (a_quotient, a_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
-            new_cqf.blocks.set_occupied(a_quotient, true);
-            new_cqf.blocks.set_slot(merged_current_quotient, a_remainder);
-            if a_val.count != 1 {
-                new_cqf.blocks.set_count(merged_current_quotient+1, true);
-                new_cqf.blocks.set_slot(merged_current_quotient+1, a_val.count);
-                merged_current_quotient += 2;
-                new_cqf.metadata.num_occupied_slots.fetch_add(2, Ordering::Relaxed);
-            } else {
-                merged_current_quotient += 1;
-                new_cqf.metadata.num_occupied_slots.fetch_add(1, Ordering::Relaxed);
-            }
-            // check runend
-            let inserted_quotient = a_quotient;
-            if next_a.is_none() {
-                break;
-            }
-            a_val = next_a.unwrap();
-            next_a = iter_a.next();
-            let next_quotient = new_cqf.quotient_remainder_from_hash(a_val.hash).0;
-            if next_quotient != inserted_quotient {
-                new_cqf.blocks.set_runend(merged_current_quotient-1, true);
-            }
+        if next_quotient != new_quotient {
+            self.blocks.set_runend(*current_quotient-1, true);
         }
+
+        let quotient_block_idx = new_quotient / SLOTS_PER_BLOCK as u64;
+        let end_of_insert = *current_quotient-1;
+        // The block we're inserting into
+        let insert_block_idx = (*current_quotient-1) / SLOTS_PER_BLOCK as u64;
+        for i in (quotient_block_idx+1)..insert_block_idx {
+            // println!("setting offset for block {} eoi {}", i, end_of_insert % SLOTS_PER_BLOCK as u64);
+            // new_cqf.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+            self.blocks.set_offset(i * SLOTS_PER_BLOCK as u64, (SLOTS_PER_BLOCK) as u16);
+        }
+        if quotient_block_idx+1 <= insert_block_idx {
+            self.blocks.set_offset(insert_block_idx * SLOTS_PER_BLOCK as u64, ((end_of_insert % SLOTS_PER_BLOCK as u64)+1) as u16);
+        }  
+
     }
 }
 
