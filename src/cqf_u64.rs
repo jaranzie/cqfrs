@@ -1064,6 +1064,61 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
         }
     }
 
+    pub fn resize(&mut self) -> Result<(), CqfError> {
+        let mut new_cqf: CountingQuotientFilter<'a, Hasher>;
+        if self.runtimedata.file.is_some() {
+            new_cqf = CountingQuotientFilter::new_file(
+                self.metadata.logn_slots + 1,
+                self.metadata.quotient_bits + 1,
+                self.metadata.quotient_bits + self.metadata.remainder_bits,
+                self.metadata.invertable(),
+                self.runtimedata.hasher.clone(),
+                self.runtimedata.file.as_ref().unwrap().clone(),
+            )?;
+        } else {
+            new_cqf = CountingQuotientFilter::new(
+                self.metadata.logn_slots + 1,
+                self.metadata.quotient_bits + 1,
+                self.metadata.quotient_bits + self.metadata.remainder_bits + 1,
+                self.metadata.invertable(),
+                self.runtimedata.hasher.clone(),
+            )?;
+        }
+        let mut merged_cqf_current_quotient = 0u64;
+        let mut old_iter = self.into_iter();
+        let mut current_old = old_iter.next();
+        // finish inserts
+        while current_old.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let insert_count: u64;
+            let next_quotient: u64;
+            {
+                let (r_quotient, r_remainder);
+                let r_count;
+                {
+                    let a_val = current_old.as_ref().unwrap();
+                    (r_quotient, r_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
+                    r_count = a_val.count;
+                }
+                insert_count = r_count;
+                insert_quotient = r_quotient;
+                insert_remainder = r_remainder;
+                current_old = old_iter.next();
+                next_quotient = new_cqf.next_quotient(&current_old, &None, insert_quotient);
+            }
+            new_cqf.merge_insert(
+                &mut merged_cqf_current_quotient,
+                insert_quotient,
+                next_quotient,
+                insert_remainder,
+                insert_count,
+            );
+        }
+        *self = new_cqf;
+        Ok(())
+    }
+
     fn merge_into(a: &Self, b: &Self, new_cqf: &mut Self) {
         let mut iter_a = a.into_iter();
         let mut iter_b = b.into_iter();
