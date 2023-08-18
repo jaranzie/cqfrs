@@ -257,6 +257,12 @@ mod blocks {
             self[block_index].offset_lower_bound(slot_index as u64)
         }
 
+        pub fn clear(&mut self) {
+            for i in 0..self.len {
+                self[i].clear();
+            }
+        }
+
         pub fn run_end(&self, quotient: u64) -> u64 {
             let block_idx: u64 = (quotient / SLOTS_PER_BLOCK as u64);
             let intrablock_offset: u64 = (quotient % SLOTS_PER_BLOCK as u64);
@@ -1062,6 +1068,11 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
             (None, Some(b_val)) => self.quotient_remainder_from_hash(b_val.hash).0,
             (None, None) => current_quotient - 1,
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.blocks.clear();
+        self.metadata.num_occupied_slots.store(0, Ordering::Relaxed);
     }
 
     pub fn resize(&mut self) -> Result<(), CqfError> {
