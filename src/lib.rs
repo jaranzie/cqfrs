@@ -6,24 +6,21 @@ mod cqf_u64;
 mod partitioned_counter;
 mod reversible_hasher;
 mod utils;
-use blocks::{Block, Blocks};
-use crossbeam::utils::CachePadded;
-use libc::{
-    c_void, madvise, mmap, munmap, MADV_RANDOM, MAP_ANONYMOUS, MAP_FAILED, MAP_HUGETLB,
-    MAP_PRIVATE, MAP_SHARED, PROT_READ, PROT_WRITE,
-};
-use parking_lot::Mutex;
+// use blocks::{Block, Blocks};
+// use crossbeam::utils::CachePadded;
+// use libc::{
+//     c_void, madvise, mmap, munmap, MADV_RANDOM, MAP_ANONYMOUS, MAP_FAILED, MAP_HUGETLB,
+//     MAP_PRIVATE, MAP_SHARED, PROT_READ, PROT_WRITE,
+// };
+// use parking_lot::Mutex;
 pub use reversible_hasher::*;
-use std::fs::OpenOptions;
+// use std::fs::OpenOptions;
 use std::hash::{BuildHasher, Hasher};
-use std::os::fd::AsRawFd;
+// use std::os::fd::AsRawFd;
 use std::path::PathBuf;
-use std::ptr::{self, NonNull, Unique};
-use std::sync::Arc;
-use std::{
-    fs::File,
-    sync::atomic::{AtomicI64, AtomicU64, AtomicU8, Ordering},
-};
+// use std::ptr::{self, NonNull, Unique};
+// use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 pub use utils::*;
 
 pub use cqf_u64::CountingQuotientFilter;
@@ -36,7 +33,7 @@ pub use cqf_u64::CountingQuotientFilter;
 const SLOTS_PER_BLOCK: usize = 64;
 
 struct RuntimeData<Hasher: BuildHasher> {
-    pub file: Option<File>,
+    pub file: Option<PathBuf>,
     pub in_memory: bool,
     pub hasher: Hasher,
     pub max_occupied_slots: u64,
@@ -1464,12 +1461,12 @@ struct Metadata {
 //     }
 // }
 
-fn valid_args(lognslots: u64, quotient_bits: u64, bits_per_slot: u64) -> bool {
-    if quotient_bits >= bits_per_slot - 1 || quotient_bits <= 0 || quotient_bits > lognslots {
-        return false;
-    }
-    true
-}
+// fn valid_args(lognslots: u64, quotient_bits: u64, bits_per_slot: u64) -> bool {
+//     if quotient_bits >= bits_per_slot - 1 || quotient_bits <= 0 || quotient_bits > lognslots {
+//         return false;
+//     }
+//     true
+// }
 
 // fn calulate_num_locks(num_blocks: u64) -> u64 {
 //     let num_locks = (num_blocks as f64 / NUM_SLOTS_TO_LOCK as f64).ceil() as u64;
@@ -1488,7 +1485,7 @@ impl Metadata {
     fn new(
         lognslots: u64,
         quotient_bits: u64,
-        bits_per_slot: u64,
+        _bits_per_slot: u64,
         hash_bits: u64,
         block_size: u64,
         invertable: bool,
