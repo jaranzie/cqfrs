@@ -336,7 +336,7 @@ use blocks::{Block, Blocks};
 use crossbeam::utils::CachePadded;
 use libc::{
     c_void, madvise, mmap, munmap, MADV_RANDOM, MAP_ANONYMOUS, MAP_FAILED, MAP_HUGETLB,
-    MAP_PRIVATE, MAP_SHARED, PROT_READ, PROT_WRITE,
+    MAP_PRIVATE, MAP_SHARED, PROT_READ, PROT_WRITE, MADV_SEQUENTIAL,
 };
 use parking_lot::Mutex;
 use std::cmp::min;
@@ -538,7 +538,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
             madvise(
                 self.metadata as *const _ as *mut c_void,
                 self.metadata.total_size_in_bytes as usize,
-                MADV_RANDOM,
+                MADV_SEQUENTIAL,
             )
         };
     }
@@ -1240,6 +1240,7 @@ impl<'a, Hasher: BuildHasher> IntoIterator for &'a CountingQuotientFilter<'a, Ha
     // }
 
     fn into_iter(self) -> Self::IntoIter {
+        self.advise_seq();
         let mut position = 0;
         if !self.blocks.is_occupied(0) {
             let mut block_index: usize = 0;
@@ -1370,6 +1371,10 @@ impl<'a, Hasher: BuildHasher> CQFIterator<'a, Hasher> {
                     self.position = self.qf.metadata.real_num_slots;
                     return false;
                 }
+
+                // advise dont need old run
+                // let old_run = self.run;
+
 
                 self.run = block_idx * 64 + next_run;
                 self.position += 1;
