@@ -346,6 +346,7 @@ use libc::{
 };
 use parking_lot::Mutex;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::hash::{self, BuildHasher, Hasher};
 use std::os::fd::AsRawFd;
@@ -1040,12 +1041,54 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
             )?;
         }
 
-        Self::merge_into(a, b, &mut new_cqf);
+        Self::merge_into(larger, smaller, &mut new_cqf);
         // not sure if this works
         return Ok(new_cqf);
-
         Err(CqfError::FileError)
     }
+
+    pub fn merge_file(a: &Self, b: &Self, path: PathBuf) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|_| CqfError::FileError)?;
+        }
+        let (larger, smaller) = if a.metadata.num_occupied_slots.load(Ordering::Relaxed)
+            > b.metadata.num_occupied_slots.load(Ordering::Relaxed)
+        {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let mut new_cqf: CountingQuotientFilter<'a, Hasher>;
+        if larger.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
+            + smaller.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
+            > larger.max_occupied_slots()
+        {
+            new_cqf = CountingQuotientFilter::new_file(
+                larger.metadata.logn_slots + 1,
+                larger.metadata.logn_slots + 1,
+                larger.metadata.quotient_bits + larger.metadata.remainder_bits,
+                larger.metadata.invertable(),
+                larger.runtimedata.hasher.clone(),
+                path,
+            )?;
+        } else {
+            new_cqf = CountingQuotientFilter::new_file(
+                larger.metadata.logn_slots,
+                larger.metadata.quotient_bits,
+                larger.metadata.quotient_bits + larger.metadata.remainder_bits,
+                larger.metadata.invertable(),
+                larger.runtimedata.hasher.clone(),
+                path,
+            )?;
+        }
+
+        Self::merge_into(larger, smaller, &mut new_cqf);
+        // not sure if this works
+        return Ok(new_cqf);
+        Err(CqfError::FileError)
+    }
+
+    
 
     // Returns current_quotient-1 if both are None
     fn next_quotient(
@@ -1536,4 +1579,145 @@ impl<'a, Hasher: BuildHasher> Iterator for CQFIterator<'a, Hasher> {
             count: current_count,
         })
     }
+}
+
+// type cb = FnMut(&mut CountingQuotientFilter<'a, Hasher>,&mut u64, u64,u64,u64,u64,u64,u64) -> bool;
+// Mantis stuff
+impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hasher> {
+    
+    pub fn merge_file_cb<F: FnMut(&mut Self,&mut u64, u64,u64,u64,u64,u64,u64) -> bool>(a: &Self, b: &Self, path: PathBuf, f: &mut F) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|_| CqfError::FileError)?;
+        }
+        let (larger, smaller) = if a.metadata.num_occupied_slots.load(Ordering::Relaxed)
+            > b.metadata.num_occupied_slots.load(Ordering::Relaxed)
+        {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let mut new_cqf: CountingQuotientFilter<'a, Hasher>;
+        if larger.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
+            + smaller.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
+            > larger.max_occupied_slots()
+        {
+            new_cqf = CountingQuotientFilter::new_file(
+                larger.metadata.logn_slots + 1,
+                larger.metadata.logn_slots + 1,
+                larger.metadata.quotient_bits + larger.metadata.remainder_bits,
+                larger.metadata.invertable(),
+                larger.runtimedata.hasher.clone(),
+                path,
+            )?;
+        } else {
+            new_cqf = CountingQuotientFilter::new_file(
+                larger.metadata.logn_slots,
+                larger.metadata.quotient_bits,
+                larger.metadata.quotient_bits + larger.metadata.remainder_bits,
+                larger.metadata.invertable(),
+                larger.runtimedata.hasher.clone(),
+                path,
+            )?;
+        }
+
+        Self::merge_into_cb(larger, smaller, &mut new_cqf, f);
+        // not sure if this works
+        return Ok(new_cqf);
+        Err(CqfError::FileError)
+    }
+
+    /// Fn is (&mut newcqf, &mut next insert index, a quotient, aremainder, a_count, b quotient, bremainder, b_count, &mut) -> bool True if items should not be inserted
+    fn merge_into_cb<F: FnMut(&mut Self,&mut u64, u64,u64,u64,u64,u64,u64) -> bool>(a: &Self, b: &Self, new_cqf: &mut Self, f: &mut F) {
+        let mut iter_a = a.into_iter();
+        let mut iter_b = b.into_iter();
+
+        let mut current_a = iter_a.next();
+        let mut current_b = iter_b.next();
+
+        let mut merged_cqf_current_quotient = 0u64;
+        while current_a.is_some() && current_b.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let insert_count: u64;
+            let next_quotient: u64;
+            {
+                let (a_quotient, a_remainder);
+                let (b_quotient, b_remainder);
+                let a_count;
+                let b_count;
+                {
+                    let a_val = current_a.as_ref().unwrap();
+                    let b_val = current_b.as_ref().unwrap();
+                    (a_quotient, a_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
+                    (b_quotient, b_remainder) = new_cqf.quotient_remainder_from_hash(b_val.hash);
+                    a_count = a_val.count;
+                    b_count = b_val.count;
+                }
+                if f(new_cqf, &mut merged_cqf_current_quotient, a_quotient, a_remainder, a_count, b_quotient, b_remainder, b_count) {
+                    current_a = iter_a.next();
+                    current_b = iter_b.next();
+                    continue;
+                } else if a_quotient == b_quotient {
+                    insert_count = a_count + b_count;
+                    insert_quotient = a_quotient;
+                    insert_remainder = a_remainder;
+                    current_a = iter_a.next();
+                    current_b = iter_b.next();
+                } else if a_quotient < b_quotient {
+                    insert_count = a_count;
+                    insert_quotient = a_quotient;
+                    insert_remainder = a_remainder;
+                    current_a = iter_a.next();
+                    // current_b = Some(b_val);
+                } else {
+                    insert_count = b_count;
+                    insert_quotient = b_quotient;
+                    insert_remainder = b_remainder;
+                    current_b = iter_b.next();
+                }
+                next_quotient = new_cqf.next_quotient(&current_a, &current_b, insert_quotient);
+            }
+            new_cqf.merge_insert(
+                &mut merged_cqf_current_quotient,
+                insert_quotient,
+                next_quotient,
+                insert_remainder,
+                insert_count,
+            );
+        }
+        let (mut current_remaining, mut remaining_iter) = if current_a.is_some() {
+            (current_a, iter_a)
+        } else {
+            (current_b, iter_b)
+        };
+        // finish inserts
+        while current_remaining.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let insert_count: u64;
+            let next_quotient: u64;
+            {
+                let (r_quotient, r_remainder);
+                let r_count;
+                {
+                    let a_val = current_remaining.as_ref().unwrap();
+                    (r_quotient, r_remainder) = new_cqf.quotient_remainder_from_hash(a_val.hash);
+                    r_count = a_val.count;
+                }
+                insert_count = r_count;
+                insert_quotient = r_quotient;
+                insert_remainder = r_remainder;
+                current_remaining = remaining_iter.next();
+                next_quotient = new_cqf.next_quotient(&current_remaining, &None, insert_quotient);
+            }
+            new_cqf.merge_insert(
+                &mut merged_cqf_current_quotient,
+                insert_quotient,
+                next_quotient,
+                insert_remainder,
+                insert_count,
+            );
+        }
+    }
+
 }
