@@ -43,12 +43,13 @@ fn main() {
     //     qf.insert(numbers[i] as u64, 1).expect("insert failed!");
     // }
 
-    let mut qf2 = CountingQuotientFilter::new(
+    let mut qf2 = CountingQuotientFilter::new_file(
         LOGN_SLOTS,
         LOGN_SLOTS,
         64,
         true,
         BuildReversableHasher::default(),
+        "test.qf".into(),
     )
     .unwrap();
 

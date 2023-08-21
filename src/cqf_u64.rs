@@ -399,26 +399,27 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
         let mmap_flags;
         let fd: i32;
         let prot_flags = PROT_READ | PROT_WRITE;
+        let mut f: File;
         match file {
             Some(fpath) => {
                 mmap_flags = MAP_SHARED;
                 if new {
-                    let mut file = OpenOptions::new()
+                    f = OpenOptions::new()
                         .read(true)
                         .write(true)
                         .create_new(true)
                         .open(fpath)
                         .map_err(|_| CqfError::FileError)?;
-                    file.set_len(init_metadata.total_size_in_bytes)
+                    f.set_len(init_metadata.total_size_in_bytes)
                         .map_err(|_| CqfError::FileError)?;
-                    fd = file.as_raw_fd();
+                    fd = f.as_raw_fd();
                 } else {
-                    let mut file = OpenOptions::new()
+                    f = OpenOptions::new()
                         .read(true)
                         .write(true)
                         .open(fpath)
                         .map_err(|_| CqfError::FileError)?;
-                    fd = file.as_raw_fd();
+                    fd = f.as_raw_fd();
                 }
             }
             None => {
@@ -426,6 +427,8 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
                 fd = -1;
             }
         };
+        println!("fd: {}", fd);
+        println!("total_size_in_bytes: {}", init_metadata.total_size_in_bytes);
         let buffer = unsafe {
             mmap(
                 ptr::null_mut(),
@@ -437,6 +440,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
             )
         };
         if buffer == MAP_FAILED {
+            println!("buffer: {:p}", buffer);
             return Err(CqfError::MmapError);
         }
         let metadata = unsafe { &mut *(buffer as *mut Metadata) };
