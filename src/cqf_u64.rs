@@ -1585,7 +1585,7 @@ impl<'a, Hasher: BuildHasher> Iterator for CQFIterator<'a, Hasher> {
 // Mantis stuff
 impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hasher> {
     
-    pub fn merge_file_cb<F: FnMut(&mut Self,&mut u64, u64,u64,u64,u64,u64,u64) -> bool>(a: &Self, b: &Self, path: PathBuf, f: &mut F) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
+    pub fn merge_file_cb(a: &Self, b: &Self, path: PathBuf, f: fn(&mut Self,&mut u64, u64,u64,u64,u64,u64,u64) -> bool) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
         if path.exists() {
             std::fs::remove_file(&path).map_err(|_| CqfError::FileError)?;
         }
@@ -1627,7 +1627,7 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
     }
 
     /// Fn is (&mut newcqf, &mut next insert index, a quotient, aremainder, a_count, b quotient, bremainder, b_count, &mut) -> bool True if items should not be inserted
-    fn merge_into_cb<F: FnMut(&mut Self,&mut u64, u64,u64,u64,u64,u64,u64) -> bool>(a: &Self, b: &Self, new_cqf: &mut Self, f: &mut F) {
+    fn merge_into_cb(a: &Self, b: &Self, new_cqf: &mut Self, f: fn(&mut Self,&mut u64, u64,u64,u64,u64,u64,u64) -> bool) {
         let mut iter_a = a.into_iter();
         let mut iter_b = b.into_iter();
 
