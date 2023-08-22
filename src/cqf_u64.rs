@@ -1016,8 +1016,8 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
 impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hasher> {
     /// Merges a and b into a in memory cqf
     pub fn merge(a: &Self, b: &Self) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
-        let (larger, smaller) = if a.metadata.num_occupied_slots.load(Ordering::Relaxed)
-            > b.metadata.num_occupied_slots.load(Ordering::Relaxed)
+        let (larger, smaller) = if a.max_occupied_slots()
+            > b.max_occupied_slots()
         {
             (a, b)
         } else {
@@ -1045,7 +1045,7 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
             )?;
         }
 
-        Self::merge_into(larger, smaller, &mut new_cqf);
+        Self::merge_into(a, b, &mut new_cqf);
         // not sure if this works
         return Ok(new_cqf);
         Err(CqfError::FileError)
@@ -1055,8 +1055,8 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
         if path.exists() {
             std::fs::remove_file(&path).map_err(|_| CqfError::FileError)?;
         }
-        let (larger, smaller) = if a.metadata.num_occupied_slots.load(Ordering::Relaxed)
-            > b.metadata.num_occupied_slots.load(Ordering::Relaxed)
+        let (larger, smaller) = if a.max_occupied_slots()
+            > b.max_occupied_slots()
         {
             (a, b)
         } else {
@@ -1592,8 +1592,8 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
         if path.exists() {
             std::fs::remove_file(&path).map_err(|_| CqfError::FileError)?;
         }
-        let (larger, smaller) = if a.metadata.num_occupied_slots.load(Ordering::Relaxed)
-            > b.metadata.num_occupied_slots.load(Ordering::Relaxed)
+        let (larger, smaller) = if a.max_occupied_slots()
+            > b.max_occupied_slots()
         {
             (a, b)
         } else {
