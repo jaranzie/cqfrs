@@ -24,6 +24,12 @@ fn main() {
     )
     .unwrap();
 
+    for i in qf.into_iter() {
+        println!("item: {}", i.count);
+    }
+
+    println!("Done with first iter");
+
     // let n_strings: usize = ((1 << 10)) as usize;
     let n_strings: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.9) as usize;
     let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);

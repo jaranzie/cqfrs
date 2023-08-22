@@ -1354,8 +1354,20 @@ impl<'a, Hasher: BuildHasher> IntoIterator for &'a CountingQuotientFilter<'a, Ha
 
     fn into_iter(self) -> Self::IntoIter {
         self.advise_seq();
+        // println!("{}", self.metadata.num_occupied_slots.load(Ordering::Relaxed));
+
+
         let mut position = 0;
-        if !self.blocks.is_occupied(0) {
+        if self.num_occupied_slots() == 0 {
+            return CQFIterator {
+                qf: self,
+                position: 0,
+                end: 0,
+                run: 0,
+                first: true,
+                // id: 0,
+            };
+        } else if !self.blocks.is_occupied(0) {
             let mut block_index: usize = 0;
             // let mut idx = bitselect(self.get_block(0).occupieds, 0);
             let mut idx = bitselect(self.blocks[0].occupieds(), 0);
@@ -1550,6 +1562,9 @@ impl<'a, Hasher: BuildHasher> Iterator for CQFIterator<'a, Hasher> {
     //     })
     // }
     fn next(&mut self) -> Option<Self::Item> {
+        if self.position >= self.end {
+            return None;
+        }
         if self.first {
             self.first = false;
             let (mut current_remainder, mut current_count): (u64, u64) = (0, 0);
