@@ -1137,7 +1137,7 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
             new_cqf = CountingQuotientFilter::new(
                 self.metadata.logn_slots + 1,
                 self.metadata.quotient_bits + 1,
-                self.metadata.quotient_bits + self.metadata.remainder_bits + 1,
+                self.metadata.quotient_bits + self.metadata.remainder_bits,
                 self.metadata.invertable(),
                 self.runtimedata.hasher.clone(),
             )?;
