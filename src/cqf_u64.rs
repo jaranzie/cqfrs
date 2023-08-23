@@ -1700,6 +1700,7 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
                 insert_count,
             );
         }
+        let is_a = current_a.is_some();
         let (mut current_remaining, mut remaining_iter) = if current_a.is_some() {
             (current_a, iter_a)
         } else {
@@ -1709,7 +1710,7 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
         while current_remaining.is_some() {
             let insert_quotient: u64;
             let insert_remainder: u64;
-            let insert_count: u64;
+            let mut insert_count: u64;
             let next_quotient: u64;
             {
                 let (r_quotient, r_remainder);
@@ -1724,6 +1725,9 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
                 insert_remainder = r_remainder;
                 current_remaining = remaining_iter.next();
                 next_quotient = new_cqf.next_quotient(&current_remaining, &None, insert_quotient);
+            }
+            if is_a {
+                f(s, new_cqf, insert_quotient, insert_remainder, &mut insert_count, u64::MAX, u64::MAX, &mut 0);
             }
             new_cqf.merge_insert(
                 &mut merged_cqf_current_quotient,
