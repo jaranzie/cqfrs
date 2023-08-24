@@ -635,11 +635,11 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
         hasher.finish()
     }
 
-    fn max_occupied_slots(&self) -> u64 {
+    pub fn max_occupied_slots(&self) -> u64 {
         self.runtimedata.max_occupied_slots
     }
 
-    fn num_occupied_slots(&self) -> u64 {
+    pub fn num_occupied_slots(&self) -> u64 {
         self.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
     }
 
