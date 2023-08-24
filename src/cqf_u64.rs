@@ -1740,3 +1740,9 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
     }
 
 }
+
+impl<'a, Hasher: BuildHasher> Drop for CountingQuotientFilter<'_, Hasher> {
+    fn drop(&mut self) {
+        unsafe { munmap(self.metadata as *const _ as *mut c_void, self.metadata.total_size_in_bytes as usize) };
+    }
+}
