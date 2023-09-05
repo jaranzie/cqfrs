@@ -1688,13 +1688,13 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
                     b_remainder,
                     &mut b_count,
                 );
-                if a_quotient == b_quotient {
+                if a_quotient == b_quotient && a_remainder == b_remainder {
                     insert_count = a_count + b_count;
                     insert_quotient = a_quotient;
                     insert_remainder = a_remainder;
                     current_a = iter_a.next();
                     current_b = iter_b.next();
-                } else if a_quotient < b_quotient {
+                } else if a_quotient < b_quotient || (a_quotient == b_quotient && a_remainder < b_remainder) {
                     insert_count = a_count;
                     insert_quotient = a_quotient;
                     insert_remainder = a_remainder;
