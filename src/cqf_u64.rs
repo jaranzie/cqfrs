@@ -1,6 +1,7 @@
 type Remainder = u64;
 const SLOTS_PER_BLOCK: usize = 64;
 use crate::{bitmask, bitrank, bitselect, bitselectv, popcntv};
+use std::mem::ManuallyDrop;
 pub struct HashCount {
     pub hash: u64,
     pub count: u64,
@@ -358,14 +359,14 @@ use std::{
     sync::atomic::{AtomicI64, AtomicU64, AtomicU8, Ordering},
 };
 
-pub struct CountingQuotientFilter<'a, Hasher: BuildHasher> {
+pub struct CountingQuotientFilter<Hasher: BuildHasher> {
     runtimedata: Box<RuntimeData<Hasher>>,
-    metadata: &'a Metadata,
+    metadata: std::mem::ManuallyDrop<Box<Metadata>>,
     blocks: Blocks,
 }
 
 /// lognslots should be atleast as big as quotient_bits, probably equal is best
-impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
+impl<Hasher: BuildHasher> CountingQuotientFilter<Hasher> {
     fn valid_args(lognslots: u64, quotient_bits: u64, hash_bits: u64) -> bool {
         if quotient_bits > Remainder::BITS as u64 {
             return false;
@@ -384,7 +385,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
         invertable: bool,
         file: Option<&Path>,
         new: bool,
-    ) -> Result<(&'a mut Metadata, Blocks), CqfError> {
+    ) -> Result<(ManuallyDrop<Box<Metadata>>, Blocks), CqfError> {
         if !Self::valid_args(lognslots, quotient_bits, hash_bits) {
             return Err(CqfError::InvalidArguments);
         }
@@ -443,9 +444,10 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
             println!("buffer: {:p}", buffer);
             return Err(CqfError::MmapError);
         }
-        let metadata = unsafe { &mut *(buffer as *mut Metadata) };
+        let metadata = unsafe { (buffer as *mut Metadata) };
+        let mut metadata = std::mem::ManuallyDrop::new(unsafe { Box::from_raw(metadata) });
         if new {
-            *metadata = init_metadata;
+            **metadata = init_metadata;
         }
         let blocks_ptr =
             unsafe { buffer.offset(std::mem::size_of::<Metadata>() as isize) as *mut Block };
@@ -471,6 +473,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
             None,
             true,
         )?;
+        let real_num_slots = metadata.real_num_slots;
         let cqf = CountingQuotientFilter {
             blocks,
             metadata,
@@ -478,7 +481,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
                 in_memory: true,
                 hasher,
                 file: None,
-                max_occupied_slots: (metadata.real_num_slots as f64 * 0.95) as u64,
+                max_occupied_slots: (real_num_slots as f64 * 0.95) as u64,
             }),
         };
         Ok(cqf)
@@ -503,6 +506,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
             Some(&file),
             true,
         )?;
+        let real_num_slots = metadata.real_num_slots;
         let cqf = CountingQuotientFilter {
             blocks,
             metadata,
@@ -510,7 +514,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
                 in_memory: true,
                 hasher,
                 file: Some(file),
-                max_occupied_slots: (metadata.real_num_slots as f64 * 0.95) as u64,
+                max_occupied_slots: (real_num_slots as f64 * 0.95) as u64,
             }),
         };
         Ok(cqf)
@@ -521,6 +525,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
             return Err(CqfError::FileError);
         }
         let (metadata, blocks) = Self::make_metadata_blocks(0, 0, 0, false, Some(&file), false)?;
+        let real_num_slots = metadata.real_num_slots;
         let cqf = CountingQuotientFilter {
             blocks,
             metadata,
@@ -528,16 +533,17 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
                 in_memory: true,
                 hasher,
                 file: Some(file),
-                max_occupied_slots: (metadata.real_num_slots as f64 * 0.95) as u64,
+                max_occupied_slots: (real_num_slots as f64 * 0.95) as u64,
             }),
         };
         Ok(cqf)
     }
 
     pub fn advise_random(&self) {
+        let metadata_pointer = &**self.metadata;
         unsafe {
             madvise(
-                self.metadata as *const _ as *mut c_void,
+                metadata_pointer as *const Metadata as *mut c_void,
                 self.metadata.total_size_in_bytes as usize,
                 MADV_RANDOM,
             )
@@ -545,9 +551,10 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
     }
 
     pub fn advise_seq(&self) {
+        let metadata_pointer = &**self.metadata;
         unsafe {
             madvise(
-                self.metadata as *const _ as *mut c_void,
+                metadata_pointer as *const Metadata as *mut c_void,
                 self.metadata.total_size_in_bytes as usize,
                 MADV_SEQUENTIAL,
             )
@@ -720,7 +727,7 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
     }
 }
 
-impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
+impl<Hasher: BuildHasher> CountingQuotientFilter<Hasher> {
     pub fn insert_by_hash(&mut self, hash: u64, count: u64) -> Result<(), CqfError> {
         // println!("insert_by_hash {hash} {count}");
         if count == 0 {
@@ -1013,15 +1020,15 @@ impl<'a, Hasher: BuildHasher> CountingQuotientFilter<'a, Hasher> {
     }
 }
 
-impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hasher> {
+impl<Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<Hasher> {
     /// Merges a and b into a in memory cqf
-    pub fn merge(a: &Self, b: &Self) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
+    pub fn merge(a: &Self, b: &Self) -> Result<CountingQuotientFilter<Hasher>, CqfError> {
         let (larger, smaller) = if a.max_occupied_slots() > b.max_occupied_slots() {
             (a, b)
         } else {
             (b, a)
         };
-        let mut new_cqf: CountingQuotientFilter<'a, Hasher>;
+        let mut new_cqf: CountingQuotientFilter<Hasher>;
         if larger.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
             + smaller.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
             > larger.max_occupied_slots()
@@ -1053,7 +1060,7 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
         a: &Self,
         b: &Self,
         path: PathBuf,
-    ) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
+    ) -> Result<CountingQuotientFilter<Hasher>, CqfError> {
         if path.exists() {
             std::fs::remove_file(&path).map_err(|_| CqfError::FileError)?;
         }
@@ -1062,7 +1069,7 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
         } else {
             (b, a)
         };
-        let mut new_cqf: CountingQuotientFilter<'a, Hasher>;
+        let mut new_cqf: CountingQuotientFilter<Hasher>;
         if larger.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
             + smaller.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
             > larger.max_occupied_slots()
@@ -1121,7 +1128,7 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
     }
 
     pub fn resize(&mut self) -> Result<(), CqfError> {
-        let mut new_cqf: CountingQuotientFilter<'a, Hasher>;
+        let mut new_cqf: CountingQuotientFilter<Hasher>;
         if self.runtimedata.file.is_some() {
             new_cqf = CountingQuotientFilter::new_file(
                 self.metadata.logn_slots + 1,
@@ -1319,7 +1326,7 @@ impl<'a, Hasher: BuildHasher + Default + Clone> CountingQuotientFilter<'a, Hashe
     }
 }
 
-impl<'a, Hasher: BuildHasher> IntoIterator for &'a CountingQuotientFilter<'a, Hasher> {
+impl<'a, Hasher: BuildHasher> IntoIterator for &'a CountingQuotientFilter<Hasher> {
     type Item = HashCount;
     type IntoIter = CQFIterator<'a, Hasher>;
 
@@ -1514,7 +1521,7 @@ impl<'a, Hasher: BuildHasher> CQFIterator<'a, Hasher> {
 }
 
 pub struct CQFIterator<'a, Hasher: BuildHasher> {
-    qf: &'a CountingQuotientFilter<'a, Hasher>,
+    qf: &'a CountingQuotientFilter<Hasher>,
     position: u64,
     end: u64,
     run: u64,
@@ -1596,7 +1603,7 @@ impl<'a, Hasher: BuildHasher> Iterator for CQFIterator<'a, Hasher> {
     }
 }
 
-impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hasher> {
+impl<Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<Hasher> {
     /// Fn is (a quotient, aremainder, &mut a_count, b quotient, bremainder, &mut b_count) -> bool True if items should not be inserted
     pub fn merge_file_cb<T>(
         s: &T,
@@ -1604,7 +1611,7 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
         b: &Self,
         path: PathBuf,
         f: fn(&T, &mut Self, &Self, &Self, u64, u64, &mut u64, u64, u64, &mut u64),
-    ) -> Result<CountingQuotientFilter<'a, Hasher>, CqfError> {
+    ) -> Result<CountingQuotientFilter<Hasher>, CqfError> {
         if path.exists() {
             std::fs::remove_file(&path).map_err(|_| CqfError::FileError)?;
         }
@@ -1613,7 +1620,7 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
         } else {
             (b, a)
         };
-        let mut new_cqf: CountingQuotientFilter<'a, Hasher>;
+        let mut new_cqf: CountingQuotientFilter<Hasher>;
         if larger.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
             + smaller.metadata.num_occupied_slots.load(Ordering::Relaxed) as u64
             > larger.max_occupied_slots()
@@ -1767,13 +1774,15 @@ impl<'a, Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<'a, Hashe
     }
 }
 
-impl<'a, Hasher: BuildHasher> Drop for CountingQuotientFilter<'_, Hasher> {
+impl<Hasher: BuildHasher> Drop for CountingQuotientFilter<Hasher> {
     fn drop(&mut self) {
+        let metadata_pointer = &**self.metadata;
         unsafe {
             munmap(
-                self.metadata as *const _ as *mut c_void,
+                metadata_pointer as *const Metadata as *mut c_void,
                 self.metadata.total_size_in_bytes as usize,
             )
         };
+        // drop(self.runtimedata);
     }
 }
