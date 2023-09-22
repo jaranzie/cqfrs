@@ -2,11 +2,12 @@ use std::hash::{BuildHasher, Hasher};
 
 /// Only supports types that are less that 64 bits wide
 #[derive(Clone, Copy, Default)]
-pub struct ReversibleHasher {
+pub struct ReversibleHasher<const HASH_BITS: u64> {
     hash: u64,
 }
 
-impl ReversibleHasher {
+impl<const HASH_BITS: u64> ReversibleHasher<HASH_BITS> {
+    const HASH_MASK: u64 = (1<<HASH_BITS)-1;
     fn new() -> Self {
         ReversibleHasher { hash: 0 }
     }
@@ -17,14 +18,14 @@ impl ReversibleHasher {
 
         // Invert key = key + (key << 31)
         tmp = key.wrapping_sub(key << 31);
-        key = key.wrapping_sub(tmp << 31);
+        key = (key.wrapping_sub(tmp << 31)) & Self::HASH_MASK;
 
         // Invert key = key ^ (key >> 28)
         tmp = key ^ key >> 28;
         key = key ^ tmp >> 28;
 
         // Invert key *= 21
-        key = key.wrapping_mul(14933078535860113213);
+        key = (key.wrapping_mul(14933078535860113213)) & Self::HASH_MASK;
 
         // Invert key = key ^ (key >> 14)
         tmp = key ^ key >> 14;
@@ -33,7 +34,7 @@ impl ReversibleHasher {
         key = key ^ tmp >> 14;
 
         // Invert key *= 265
-        key = key.wrapping_mul(15244667743933553977);
+        key = (key.wrapping_mul(15244667743933553977)) & Self::HASH_MASK;
 
         // Invert key = key ^ (key >> 24)
         tmp = key ^ key >> 24;
@@ -43,22 +44,22 @@ impl ReversibleHasher {
         tmp = !key;
         tmp = !(key.wrapping_sub(tmp << 21));
         tmp = !(key.wrapping_sub(tmp << 21));
-        key = !(key.wrapping_sub(tmp << 21));
+        key = (!(key.wrapping_sub(tmp << 21))) & Self::HASH_MASK;
 
         key
     }
 }
 
-impl Hasher for ReversibleHasher {
+impl<const HASH_BITS: u64> Hasher for ReversibleHasher<HASH_BITS> {
     fn finish(&self) -> u64 {
         let mut key = self.hash;
-        key = (!key).wrapping_add(key << 21); // key = (key << 21) - key - 1;
+        key = ((!key).wrapping_add(key << 21)) & Self::HASH_MASK; // key = (key << 21) - key - 1;
         key = key ^ (key >> 24);
-        key = (key.wrapping_add(key << 3)).wrapping_add(key << 8); // key * 265
+        key = ((key.wrapping_add(key << 3)).wrapping_add(key << 8)) & Self::HASH_MASK; // key * 265
         key = key ^ (key >> 14);
-        key = (key.wrapping_add(key << 2)).wrapping_add(key << 4); // key * 21
+        key = ((key.wrapping_add(key << 2)).wrapping_add(key << 4)) & Self::HASH_MASK; // key * 21
         key = key ^ (key >> 28);
-        key = key.wrapping_add(key << 31);
+        key = key.wrapping_add(key << 31) & Self::HASH_MASK;
         key
     }
 
@@ -71,10 +72,10 @@ impl Hasher for ReversibleHasher {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct BuildReversableHasher;
+pub struct BuildReversableHasher<const HASH_BITS: u64>;
 
-impl BuildHasher for BuildReversableHasher {
-    type Hasher = ReversibleHasher;
+impl<const HASH_BITS: u64> BuildHasher for BuildReversableHasher<HASH_BITS> {
+    type Hasher = ReversibleHasher<HASH_BITS>;
 
     fn build_hasher(&self) -> Self::Hasher {
         ReversibleHasher::new()
