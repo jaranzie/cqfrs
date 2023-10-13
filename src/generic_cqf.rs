@@ -1,164 +1,94 @@
-type Remainder = u64;
+type Remainder = u32;
+// type Remainder = u64;
 const SLOTS_PER_BLOCK: usize = 64;
-use crate::{bitmask, bitrank, bitselect, bitselectv, popcntv};
-use std::mem::ManuallyDrop;
+use crate::{bitrank, bitselect, bitmask, bitselectv, popcntv};
 pub struct HashCount {
     pub hash: u64,
     pub count: u64,
 }
 
 mod blocks {
+    type Offset = u16;
+
     use super::Remainder;
     use super::SLOTS_PER_BLOCK;
     use crate::utils::*;
     use bitintr::{Pdep, Popcnt, Tzcnt};
+    use std::mem::align_of;
     use std::ops::Deref;
     use std::ops::DerefMut;
     use std::ptr::Unique;
 
     #[repr(C)]
+    pub struct BlockMetadata {
+        // pub offset: u16,
+        pub occupieds: u64,
+        pub runends: u64
+    }
     pub struct Block {
-        occupieds: u64,
-        runends: u64,
         counts: u64,
         remainders: [Remainder; SLOTS_PER_BLOCK],
-        offset: u16,
-    }
-
-    impl Block {
-        pub fn get_slot(&self, slot: usize) -> Remainder {
-            self.remainders[slot]
-        }
-
-        pub fn offset(&self) -> u16 {
-            self.offset
-        }
-
-        pub fn occupieds(&self) -> u64 {
-            self.occupieds
-        }
-
-        pub fn runends(&self) -> u64 {
-            self.runends
-        }
-
-        pub fn counts(&self) -> u64 {
-            self.counts
-        }
-
-        #[inline]
-        pub fn slot(&self, slot: usize) -> &Remainder {
-            &self.remainders[slot]
-        }
-
-        #[inline]
-        pub fn slot_mut(&mut self, slot: usize) -> &mut Remainder {
-            &mut self.remainders[slot]
-        }
-
-        #[inline]
-        pub fn flip_occupied(&mut self, slot: usize) {
-            self.occupieds ^= 1 << slot;
-        }
-
-        #[inline]
-        pub fn is_occupied(&self, slot: usize) -> bool {
-            ((self.occupieds >> slot) & 1) != 0
-        }
-
-        pub fn set_occupied(&mut self, slot: usize, bit: bool) {
-            if bit {
-                self.occupieds |= 1 << slot;
-            } else {
-                self.occupieds &= !(1 << slot);
-            }
-        }
-
-        #[inline]
-        pub fn flip_runend(&mut self, slot: usize) {
-            self.runends ^= 1 << slot;
-        }
-
-        #[inline]
-        pub fn is_runend(&self, slot: usize) -> bool {
-            ((self.runends >> slot) & 1) != 0
-        }
-
-        pub fn set_runend(&mut self, slot: usize, bit: bool) {
-            if bit {
-                self.runends |= 1 << slot;
-            } else {
-                self.runends &= !(1 << slot);
-            }
-        }
-
-        #[inline]
-        pub fn flip_count(&mut self, slot: usize) {
-            self.counts ^= 1 << slot;
-        }
-
-        #[inline]
-        pub fn is_count(&self, slot: usize) -> bool {
-            ((self.counts >> slot) & 1) != 0
-        }
-
-        pub fn set_count(&mut self, slot: usize, bit: bool) {
-            if bit {
-                self.counts |= 1 << slot;
-            } else {
-                self.counts &= !(1 << slot);
-            }
-        }
-
-        pub fn has_metadata_bits_set(&self, slot: usize) -> bool {
-            self.is_occupied(slot) || self.is_runend(slot) || self.is_count(slot)
-        }
-
-        pub fn offset_lower_bound(&self, slot: u64) -> u64 {
-            let occupieds = self.occupieds & bitmask(slot + 1);
-            let offset_64: u64 = self.offset.into();
-            if offset_64 <= slot {
-                let runends = (self.runends & bitmask(slot)) >> offset_64;
-                // println!("occupieds: {:b}, runends: {:b}", occupieds, runends);
-                return (occupieds.count_ones() - runends.count_ones()) as u64;
-            }
-            return (offset_64 + occupieds.count_ones() as u64) - slot;
-        }
-
-        pub fn clear(&mut self) {
-            self.offset = 0;
-            self.occupieds = 0;
-            self.runends = 0;
-            self.counts = 0;
-            for i in 0..SLOTS_PER_BLOCK {
-                self.remainders[i] = 0 as Remainder
-            }
-        }
     }
 
     pub struct Blocks {
-        ptr: Unique<Block>,
+        ptr_metadata: Unique<BlockMetadata>,
+        ptr: Unique<Offset>,
+        ptr_blocks: Unique<Block>,
         len: usize,
-        // inner: &[Block<Remainder>]
     }
 
     impl Deref for Blocks {
         type Target = [Block];
 
         fn deref(&self) -> &Self::Target {
-            unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+            unsafe { std::slice::from_raw_parts(self.ptr_blocks.as_ptr(), self.len) }
         }
     }
 
     impl DerefMut for Blocks {
         fn deref_mut(&mut self) -> &mut [Block] {
-            unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+            unsafe { std::slice::from_raw_parts_mut(self.ptr_blocks.as_ptr(), self.len) }
         }
     }
 
     impl Blocks {
-        pub fn new(ptr: Unique<Block>, len: usize) -> Self {
+        // ptr is a pointer to the start of an mmaped region
+        pub fn new(ptr: *mut u8, len: isize) -> Self {
+            let ptr_metadata = ptr as *mut BlockMetadata;
+            let mut ptr_blocks = unsafe { ptr_metadata.offset(len) as *mut Block };
+            ptr_blocks = unsafe { 
+                ptr_blocks.add(ptr_blocks.align_offset(align_of::<Block>()))
+            };
+            
+            let ptr_blocks = unsafe { ptr_metadata.offset(len) as *mut Block };
+
+
+
             Self { ptr, len }
+        }
+
+        pub fn offsets(&self) -> &[Offset] {
+            unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        }
+
+        pub fn offsets_mut(&mut self) -> &mut [Offset] {
+            unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+        }
+
+        pub fn blocks_metadata(&self) -> &[BlockMetadata] {
+            unsafe { std::slice::from_raw_parts(self.ptr_metadata.as_ptr(), self.len) }
+        }
+
+        pub fn blocks_metadata_mut(&mut self) -> &mut [BlockMetadata] {
+            unsafe { std::slice::from_raw_parts_mut(self.ptr_metadata.as_ptr(), self.len) }
+        }
+
+        pub fn blocks(&self) -> &[Block] {
+            unsafe { std::slice::from_raw_parts(self.ptr_blocks.as_ptr(), self.len) }
+        }
+
+        pub fn blocks_mut(&mut self) -> &mut [Block] {
+            unsafe { std::slice::from_raw_parts_mut(self.ptr_blocks.as_ptr(), self.len) }
         }
 
         pub fn offset(&self, quotient: u64) -> u16 {
@@ -265,7 +195,7 @@ mod blocks {
         }
 
         pub fn run_end(&self, quotient: u64) -> u64 {
-            let block_idx: u64 = (quotient / SLOTS_PER_BLOCK as u64);
+            let block_idx: u64 = quotient / SLOTS_PER_BLOCK as u64;
             let intrablock_offset: u64 = (quotient % SLOTS_PER_BLOCK as u64);
             let blocks_offset: u64 = self[block_idx as usize].offset.into();
             let intrablock_rank: u64 =
@@ -350,12 +280,11 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::hash::{self, BuildHasher, Hasher};
 use std::os::fd::AsRawFd;
-use std::path::{self, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::ptr::{self, NonNull, Unique};
-use std::sync::Arc;
 use std::{
     fs::File,
-    sync::atomic::{AtomicI64, AtomicU64, AtomicU8, Ordering},
+    sync::atomic::Ordering,
 };
 
 pub struct CountingQuotientFilter<Hasher: BuildHasher> {
@@ -1791,53 +1720,5 @@ impl<Hasher: BuildHasher> Drop for CountingQuotientFilter<Hasher> {
                 self.metadata.total_size_in_bytes as usize,
             )
         };
-    }
-}
-
-struct ZippedCqfIterator<'a, Hasher: BuildHasher> {
-    // qf1: &'a CountingQuotientFilter<Hasher>,
-    // qf2: &'a CountingQuotientFilter<Hasher>,
-    iter1: CQFIterator<'a, Hasher>,
-    iter2: CQFIterator<'a, Hasher>,
-    current1: Option<HashCount>,
-    current2: Option<HashCount>,
-}
-
-impl<'a, Hasher:BuildHasher> ZippedCqfIterator<'a, Hasher> {
-    pub fn new(mut iter1: CQFIterator<'a, Hasher>,mut iter2: CQFIterator<'a, Hasher>) -> Self {
-        let current1 = iter1.next();
-        let current2 = iter2.next();
-        Self {
-            iter1,
-            iter2,
-            current1,
-            current2,
-        }
-    }
-}
-
-impl<'a, Hasher:BuildHasher> Iterator for ZippedCqfIterator<'a, Hasher> {
-    type Item = (Option<HashCount>, Option<HashCount>);
-    
-    fn next(&mut self) -> Option<Self::Item> {
-        let current1_ref = self.current1.as_ref();
-        let current2_ref = self.current2.as_ref();
-        if current1_ref.is_none() && current2_ref.is_none() {
-            return None;
-        } else if (current1_ref.is_some() && current2_ref.is_none()) || (current1_ref.is_some() && current2_ref.is_some() && current1_ref.unwrap().hash < current2_ref.unwrap().hash) {
-            let current1 = self.current1.take();
-            self.current1 = self.iter1.next();
-            return Some((current1, None));
-        } else if (current2_ref.is_some() && current1_ref.is_none()) || (current1_ref.is_some() && current2_ref.is_some() && current1_ref.unwrap().hash > current2_ref.unwrap().hash) {
-            let current2 = self.current2.take();
-            self.current2 = self.iter2.next();
-            return Some((None, current2));
-        } else {
-            let current1 = self.current1.take();
-            let current2 = self.current2.take();
-            self.current1 = self.iter1.next();
-            self.current2 = self.iter2.next();
-            return Some((current1, current2));
-        }
     }
 }

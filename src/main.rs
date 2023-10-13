@@ -31,72 +31,74 @@ fn main() {
 
     let h = BuildReversableHasher::<HASH_BITS>::default();
 
-    for i in numbers.into_iter() {
+    // for i in numbers.into_iter() {
         
-        let mut hasher = h.build_hasher();
-        hasher.write_u64(i & TEST_MASK);
-        let hash = hasher.finish();
-        let inverse = ReversibleHasher::<HASH_BITS>::invert_hash(hash);
+    //     let mut hasher = h.build_hasher();
+    //     hasher.write_u64(i & TEST_MASK);
+    //     let hash = hasher.finish();
+    //     let inverse = ReversibleHasher::<HASH_BITS>::invert_hash(hash);
 
-        assert_eq!(inverse, i & TEST_MASK);
-    }
-    return;
-
-
-    // let mut qf = CountingQuotientFilter::new(
-    //     LOGN_SLOTS,
-    //     LOGN_SLOTS,
-    //     64,
-    //     true,
-    //     BuildReversableHasher::<TEST_MASK>::default(),
-    // )
-    // .unwrap();
-
-    // for i in qf.into_iter() {
-    //     println!("item: {}", i.count);
+    //     assert_eq!(inverse, i & TEST_MASK);
     // }
+    // return;
 
-    // println!("Done with first iter");
 
-    // // let n_strings: usize = ((1 << 10)) as usize;
-    // let n_strings: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.9) as usize;
+    let mut qf = CountingQuotientFilter::new(
+        LOGN_SLOTS,
+        LOGN_SLOTS,
+        64,
+        true,
+        BuildReversableHasher::<HASH_BITS>::default(),
+    )
+    .unwrap();
+
+    let mut qf2 = CountingQuotientFilter::new(
+        LOGN_SLOTS,
+        LOGN_SLOTS,
+        64,
+        true,
+        BuildReversableHasher::<HASH_BITS>::default(),
+    )
+    .unwrap();
+
+    println!("Done with first iter");
+
+    for i in 0..n_strings/2 {
+        //qf.insert(strings[i].as_bytes(), 3)?;
+        // println!("inserting {}", numbers[i]);
+        qf.insert(numbers[i] % 1000 as u64, 1).expect("insert failed!");
+    }
+
+    for i in (n_strings/2)..n_strings {
+        qf2.insert(numbers[i] % 1000 as u64, 1).expect("insert failed!");
+    }
+
+    let mut temp1 = HashMap::new();
+    let mut temp2 = HashMap::new();
+    
+    for i in qf.into_iter() {
+        temp1.insert(i.hash, i.count);
+    }
+
+    for i in qf2.into_iter() {
+        temp2.insert(i.hash, i.count);
+    }
+
+    let qf3 = CountingQuotientFilter::merge(&qf, &qf2).unwrap();
+
+    for i in qf3.into_iter() {
+        let count = temp1.get(&i.hash).unwrap_or(&0) + temp2.get(&i.hash).unwrap_or(&0);
+        assert_eq!(count, i.count);
+    }
+
+    
+
+    // let n_strings: usize = ((1 << 10)) as usize;
     // let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
 
-    // // for i in 0..n_strings/2 {
-    // //     //qf.insert(strings[i].as_bytes(), 3)?;
-    // //     // println!("inserting {}", numbers[i]);
-    // //     qf.insert(numbers[i] as u64, 1).expect("insert failed!");
-    // // }
 
-    // // for i in (n_strings/2)..n_strings {
-    // //     //qf.insert(strings[i].as_bytes(), 3)?;
-    // //     // println!("inserting {}", numbers[i]);
-    // //     if numbers[i] == 15751518071769981098 {
-    // //         qf.print();
-    // //     }
-    // //     qf.insert(numbers[i] as u64, 1).expect("insert failed!");
-    // // }
-
-    // let mut qf2 = CountingQuotientFilter::new_file(
-    //     LOGN_SLOTS,
-    //     LOGN_SLOTS,
-    //     64,
-    //     true,
-    //     BuildReversableHasher::default(),
-    //     "test.qf".into(),
-    // )
-    // .unwrap();
-
-    // // let n_strings: usize = ((1 << 10)) as usize;
-    // // let mut numbers: Vec<u64> = Vec::with_capacity(n_strings);
-
-    // let mut rng = rand::thread_rng();
-    // for _ in 0..n_strings {
-    //     numbers.push(rng.gen())
-    // }
-
-    // // println!("{:?}", numbers.clone());
-    // // println!("{:?}", numbers.clone());
+    // println!("{:?}", numbers.clone());
+    // println!("{:?}", numbers.clone());
 
     // let now = Instant::now();
     // for i in 0..n_strings / 2 {

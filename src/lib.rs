@@ -3,6 +3,7 @@
 #![feature(ptr_internals)]
 mod blocks;
 mod cqf_u64;
+// mod generic_cqf;
 // mod cqf_u16;
 mod partitioned_counter;
 mod reversible_hasher;
