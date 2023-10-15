@@ -1794,7 +1794,7 @@ impl<Hasher: BuildHasher> Drop for CountingQuotientFilter<Hasher> {
     }
 }
 
-struct ZippedCqfIterator<'a, Hasher: BuildHasher> {
+pub struct ZippedCqfIterator<'a, Hasher: BuildHasher> {
     // qf1: &'a CountingQuotientFilter<Hasher>,
     // qf2: &'a CountingQuotientFilter<Hasher>,
     iter1: CQFIterator<'a, Hasher>,

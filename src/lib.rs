@@ -26,6 +26,10 @@ use std::sync::atomic::AtomicU64;
 pub use utils::*;
 
 pub use cqf_u64::CountingQuotientFilter;
+pub use cqf_u64::ZippedCqfIterator;
+pub use cqf_u64::CqfMergeCallback;
+pub use cqf_u64::CQFIterator;
+pub use cqf_u64::HashCount;
 // use rayon::iter::plumbing::{Consumer, UnindexedConsumer, UnindexedProducer};
 // use partitioned_counter::PartitionedCounter;
 // use rayon::iter::{IntoParallelIterator, ParallelIterator};
