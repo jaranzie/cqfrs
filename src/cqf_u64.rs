@@ -1627,7 +1627,7 @@ impl<Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<Hasher> {
     }
     /// Fn is (a quotient, aremainder, &mut a_count, b quotient, bremainder, &mut b_count) -> bool True if items should not be inserted
     pub fn merge_file_cb<T: CqfMergeCallback>(
-        s: &T,
+        s: &mut T,
         a: &Self,
         b: &Self,
         path: PathBuf,
@@ -1656,7 +1656,7 @@ impl<Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<Hasher> {
 
     /// Fn is (&mut newcqf, &mut next insert index, a quotient, aremainder, a_count, b quotient, bremainder, b_count, &mut) -> bool True if items should not be inserted
     fn merge_into_cb<T: CqfMergeCallback>(
-        s: &T,
+        s: &mut T,
         a: &Self,
         b: &Self,
         new_cqf: &mut Self,
@@ -1771,7 +1771,7 @@ impl<Hasher: BuildHasher + Clone + Default> CountingQuotientFilter<Hasher> {
 
 pub trait CqfMergeCallback {
     fn merge_cb<T: BuildHasher>(
-        &self,
+        &mut self,
         new_cqf: &mut CountingQuotientFilter<T>,
         a_quotient: u64,
         a_remainder: u64,
