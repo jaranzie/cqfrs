@@ -7,7 +7,7 @@ pub struct ReversibleHasher<const HASH_BITS: u64> {
 }
 
 impl<const HASH_BITS: u64> ReversibleHasher<HASH_BITS> {
-    const HASH_MASK: u64 = (1<<HASH_BITS)-1;
+    const HASH_MASK: u64 = (1 << HASH_BITS) - 1;
     fn new() -> Self {
         ReversibleHasher { hash: 0 }
     }
