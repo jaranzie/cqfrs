@@ -132,6 +132,9 @@ impl<H: BuildHasher> CountingQuotientFilter for U64Cqf<H> {
         new_remainder: u64,
         count: u64,
     ) {
+        if count == 0 {
+            return;
+        }
         let remainder = new_remainder as Remainder;
         self.blocks.set_occupied(new_quotient, true);
         if *current_quotient < new_quotient {

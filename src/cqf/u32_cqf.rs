@@ -130,6 +130,9 @@ impl<H: BuildHasher> CountingQuotientFilter for U32Cqf<H> {
         new_remainder: u64,
         count: u64,
     ) {
+        if count == 0 {
+            return;
+        }
         let remainder = new_remainder as Remainder;
         self.blocks.set_occupied(new_quotient, true);
         if *current_quotient < new_quotient {
@@ -354,7 +357,6 @@ impl<H: BuildHasher> U32Cqf<H> {
         let mut metadata = Metadata::new(quotient_bits, hash_bits, invertable);
         let blocks_size = U32Blocks::bytes_needed(metadata.num_blocks as usize);
         metadata.add_size(blocks_size as u64);
-        println!("metadata.total_size_bytes: {}", metadata.total_size_bytes);
         let mmap_flags;
         let fd: i32;
         let prot_flags = libc::PROT_READ | libc::PROT_WRITE;

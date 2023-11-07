@@ -39,7 +39,7 @@ impl std::ops::DerefMut for MetadataWrapper {
 
 impl Metadata {
     fn new(quotient_bits: u64, hash_bits: u64, invertable: bool) -> Self {
-        let num_slots: u64 = 1 << quotient_bits;
+        let num_slots: u64 = 1u64 << quotient_bits;
         let num_real_slots = (num_slots as f64 + 10 as f64 * (num_slots as f64).sqrt()) as u64;
         let num_blocks = (num_real_slots + SLOTS_PER_BLOCK as u64 - 1) / SLOTS_PER_BLOCK as u64;
         let remainder_bits = hash_bits - quotient_bits;
@@ -94,7 +94,7 @@ pub enum CqfError {
 
 pub trait CountingQuotientFilter: IntoIterator + Sized {
     type Hasher: BuildHasher;
-    type Remainder: Copy + Clone + Default + std::fmt::Debug;
+    type Remainder: Copy + Clone + Default + std::fmt::Debug + Into<u64>;
 
     fn new(
         quotient_bits: u64,
@@ -190,27 +190,345 @@ pub trait CountingQuotientFilter: IntoIterator + Sized {
 
 // }
 
-
-pub trait CqfIteratorImpl: Iterator {}
-
-pub trait CqfMergeClosure: Sized {
-    fn merge_cb<'a, CqfT: CountingQuotientFilter>(
-        &mut self,
-        new_cqf: &mut CqfT,
-        a_quotient: u64,
-        a_remainder: u64,
-        a_count: &mut u64,
-        b_quotient: u64,
-        b_remainder: u64,
-        b_count: &mut u64,
-    );
-}
-
-
-
 mod u64_cqf;
 pub use u64_cqf::*;
 mod u32_cqf;
 pub use u32_cqf::*;
 
+pub trait CqfIteratorImpl: Iterator<Item = (u64,u64)> {}
 
+pub trait CqfMergeClosure: Sized {
+    fn merge_cb<CqfT: CountingQuotientFilter>(
+        &mut self,
+        new_cqf: &mut CqfT,
+        a_quotient: u64,
+        a_remainder: u64,
+        a_count: Option<&mut u64>,
+        b_quotient: u64,
+        b_remainder: u64,
+        b_count: Option<&mut u64>,
+    );
+}
+
+pub struct CqfMerge();
+
+impl CqfMerge {
+    pub fn merge<T: CountingQuotientFilter>(mut iter_a: impl CqfIteratorImpl, mut iter_b: impl CqfIteratorImpl, new_cqf: &mut T) {
+        let mut current_a = iter_a.next();
+        let mut current_b = iter_b.next();
+        let mut merged_cqf_current_quotient = 0u64;
+        while current_a.is_some() && current_b.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let insert_count: u64;
+            let next_quotient_: u64;
+            {
+                let (a_quotient, a_remainder): (u64,u64);
+                let (b_quotient, b_remainder): (u64,u64);
+                let a_count;
+                let b_count;
+                {
+                    let a_val = current_a.as_ref().unwrap();
+                    let b_val = current_b.as_ref().unwrap();
+                    let av = new_cqf.quotient_remainder_from_hash(a_val.1);
+                    (a_quotient, a_remainder) = (av.0, av.1.into());
+                    let bv = new_cqf.quotient_remainder_from_hash(b_val.1);
+                    (b_quotient, b_remainder) = (bv.0, bv.1.into());
+                    a_count = a_val.0;
+                    b_count = b_val.0;
+                }
+                let a_remainder: u64 = a_remainder.into();
+                let b_remainder: u64 = b_remainder.into();
+                if a_quotient == b_quotient && a_remainder == b_remainder {
+                    insert_count = a_count + b_count;
+                    insert_quotient = a_quotient;
+                    insert_remainder = a_remainder;
+                    current_a = iter_a.next();
+                    current_b = iter_b.next();
+                } else if a_quotient < b_quotient
+                    || (a_quotient == b_quotient && a_remainder < b_remainder)
+                {
+                    insert_count = a_count;
+                    insert_quotient = a_quotient;
+                    insert_remainder = a_remainder;
+                    current_a = iter_a.next();
+                    // current_b = Some(b_val);
+                } else {
+                    insert_count = b_count;
+                    insert_quotient = b_quotient;
+                    insert_remainder = b_remainder;
+                    current_b = iter_b.next();
+                }
+                next_quotient_ = Self::next_quotient(new_cqf, &current_a, &current_b, insert_quotient);
+            }
+            new_cqf.merge_insert(
+                &mut merged_cqf_current_quotient,
+                insert_quotient,
+                next_quotient_,
+                insert_remainder,
+                insert_count,
+            );
+        }
+        while current_a.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let insert_count: u64;
+            let next_quotient_: u64;
+            {
+                let av = new_cqf.quotient_remainder_from_hash(current_a.as_ref().unwrap().1);
+                (insert_quotient, insert_remainder) = (av.0, av.1.into());
+                insert_count = current_a.as_ref().unwrap().0;
+                current_a = iter_a.next();
+            }
+            next_quotient_ = Self::next_quotient(new_cqf, &current_a, &None, insert_quotient);
+            new_cqf.merge_insert(
+                &mut merged_cqf_current_quotient,
+                insert_quotient,
+                next_quotient_,
+                insert_remainder,
+                insert_count,
+            );
+        }
+        while current_b.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let insert_count: u64;
+            let next_quotient_: u64;
+            {
+                let av = new_cqf.quotient_remainder_from_hash(current_b.as_ref().unwrap().1);
+                (insert_quotient, insert_remainder) = (av.0, av.1.into());
+                insert_count = current_b.as_ref().unwrap().0;
+                current_b = iter_b.next();
+            }
+            next_quotient_ = Self::next_quotient(new_cqf, &current_b, &None, insert_quotient);
+            new_cqf.merge_insert(
+                &mut merged_cqf_current_quotient,
+                insert_quotient,
+                next_quotient_,
+                insert_remainder,
+                insert_count,
+            );
+        }
+    }
+
+    pub fn merge_by<T: CountingQuotientFilter>(mut iter_a: impl CqfIteratorImpl, mut iter_b: impl CqfIteratorImpl, new_cqf: &mut T, closure: &mut impl CqfMergeClosure) {
+        let mut current_a = iter_a.next();
+        let mut current_b = iter_b.next();
+        let mut merged_cqf_current_quotient = 0u64;
+        while current_a.is_some() && current_b.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let insert_count: u64;
+            let next_quotient_: u64;
+            {
+                let (a_quotient, a_remainder): (u64,u64);
+                let (b_quotient, b_remainder): (u64,u64);
+                let mut a_count;
+                let mut b_count;
+                {
+                    let a_val = current_a.as_ref().unwrap();
+                    let b_val = current_b.as_ref().unwrap();
+                    let av = new_cqf.quotient_remainder_from_hash(a_val.1);
+                    (a_quotient, a_remainder) = (av.0, av.1.into());
+                    let bv = new_cqf.quotient_remainder_from_hash(b_val.1);
+                    (b_quotient, b_remainder) = (bv.0, bv.1.into());
+                    a_count = a_val.0;
+                    b_count = b_val.0;
+                }
+                let a_remainder: u64 = a_remainder.into();
+                    let b_remainder: u64 = b_remainder.into();
+                closure.merge_cb(
+                    new_cqf,
+                    a_quotient,
+                    a_remainder,
+                    Some(&mut a_count),
+                    b_quotient,
+                    b_remainder,
+                    Some(&mut b_count),
+                );
+                if a_quotient == b_quotient && a_remainder == b_remainder {
+                    insert_count = a_count + b_count;
+                    insert_quotient = a_quotient;
+                    insert_remainder = a_remainder;
+                    current_a = iter_a.next();
+                    current_b = iter_b.next();
+                } else if a_quotient < b_quotient
+                    || (a_quotient == b_quotient && a_remainder < b_remainder)
+                {
+                    insert_count = a_count;
+                    insert_quotient = a_quotient;
+                    insert_remainder = a_remainder;
+                    current_a = iter_a.next();
+                    // current_b = Some(b_val);
+                } else {
+                    insert_count = b_count;
+                    insert_quotient = b_quotient;
+                    insert_remainder = b_remainder;
+                    current_b = iter_b.next();
+                }
+                next_quotient_ = Self::next_quotient(new_cqf, &current_a, &current_b, insert_quotient);
+            }
+            new_cqf.merge_insert(
+                &mut merged_cqf_current_quotient,
+                insert_quotient,
+                next_quotient_,
+                insert_remainder,
+                insert_count,
+            );
+        }
+        while current_a.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let mut insert_count: u64;
+            let next_quotient_: u64;
+            {
+                let av = new_cqf.quotient_remainder_from_hash(current_a.as_ref().unwrap().1);
+                (insert_quotient, insert_remainder) = (av.0, av.1.into());
+                insert_count = current_a.as_ref().unwrap().0;
+                current_a = iter_a.next();
+            }
+            next_quotient_ = Self::next_quotient(new_cqf, &current_a, &None, insert_quotient);
+            closure.merge_cb(
+                new_cqf,
+                insert_quotient,
+                insert_remainder,
+                Some(&mut insert_count),
+                0,
+                0,
+                None,
+            );
+            new_cqf.merge_insert(
+                &mut merged_cqf_current_quotient,
+                insert_quotient,
+                next_quotient_,
+                insert_remainder,
+                insert_count,
+            );
+        }
+        while current_b.is_some() {
+            let insert_quotient: u64;
+            let insert_remainder: u64;
+            let mut insert_count: u64;
+            let next_quotient_: u64;
+            {
+                let av = new_cqf.quotient_remainder_from_hash(current_b.as_ref().unwrap().1);
+                (insert_quotient, insert_remainder) = (av.0, av.1.into());
+                insert_count = current_b.as_ref().unwrap().0;
+                current_b = iter_b.next();
+            }
+            next_quotient_ = Self::next_quotient(new_cqf, &current_b, &None, insert_quotient);
+            closure.merge_cb(
+                new_cqf,
+                0,
+                0,
+                None,
+                insert_quotient,
+                insert_remainder,
+                Some(&mut insert_count),
+            );
+            new_cqf.merge_insert(
+                &mut merged_cqf_current_quotient,
+                insert_quotient,
+                next_quotient_,
+                insert_remainder,
+                insert_count,
+            );
+        }
+    }
+
+    fn next_quotient(new_cqf: &impl CountingQuotientFilter, a: &Option<(u64, u64)>, b: &Option<(u64, u64)>, current_quotient: u64) -> u64 {
+        match (a, b) {
+            (Some(a_val), Some(b_val)) => {
+                let a_quotient = new_cqf.quotient_remainder_from_hash(a_val.1).0;
+                let b_quotient = new_cqf.quotient_remainder_from_hash(b_val.1).0;
+                if a_quotient < b_quotient {
+                    a_quotient
+                } else {
+                    b_quotient
+                }
+            }
+            (Some(a_val), None) => new_cqf.quotient_remainder_from_hash(a_val.1).0,
+            (None, Some(b_val)) => new_cqf.quotient_remainder_from_hash(b_val.1).0,
+            (None, None) => current_quotient - 1,
+        }
+    }
+}
+
+pub struct ZippedCqfIter<A: CqfIteratorImpl, B: CqfIteratorImpl> {
+    iter_a: A,
+    iter_b: B,
+    current_a: Option<(u64, u64)>,
+    current_b: Option<(u64, u64)>,
+}
+
+impl<A: CqfIteratorImpl, B: CqfIteratorImpl> ZippedCqfIter<A, B> {
+    fn new(mut iter_a: A, mut iter_b: B) -> Self {
+        let current_a = iter_a.next();
+        let current_b = iter_b.next();
+        Self {
+            iter_a,
+            iter_b,
+            current_a,
+            current_b,
+        }
+    }
+}
+
+impl<A: CqfIteratorImpl, B: CqfIteratorImpl> Iterator for ZippedCqfIter<A, B> {
+    type Item = (Option<(u64,u64)>, Option<(u64,u64)>);
+    fn next(&mut self) -> Option<Self::Item> {
+        match (self.current_a, self.current_b) {
+            (None, None) => None,
+            (Some(a_val), None) => {
+                self.current_a = self.iter_a.next();
+                Some((Some(a_val), None))
+            }
+            (None, Some(b_val)) => {
+                self.current_b = self.iter_b.next();
+                Some((None, Some(b_val)))
+            }
+            (Some(a_val), Some(b_val)) => {
+                let a_quotient = a_val.0;
+                let b_quotient = b_val.0;
+                if a_quotient < b_quotient {
+                    self.current_a = self.iter_a.next();
+                    Some((Some(a_val), None))
+                } else if a_quotient > b_quotient {
+                    self.current_b = self.iter_b.next();
+                    Some((None, Some(b_val)))
+                } else {
+                    self.current_a = self.iter_a.next();
+                    self.current_b = self.iter_b.next();
+                    Some((Some(a_val), Some(b_val)))
+                }
+            }
+        }
+        // let current_a_ref = self.current_a.as_ref();
+        // let current_b_ref = self.current_b.as_ref();
+        // if current_a_ref.is_none() && current_b_ref.is_none() {
+        //     return None;
+        // } else if (current_a_ref.is_some() && current_b_ref.is_none())
+        //     || (current_a_ref.is_some()
+        //         && current_b_ref.is_some()
+        //         && current_a_ref.unwrap().1 < current_b_ref.unwrap().1)
+        // {
+        //     let current1 = self.current_a.take();
+        //     self.current_a = self.iter_a.next();
+        //     return Some((current1, None));
+        // } else if (current_b_ref.is_some() && current_a_ref.is_none())
+        //     || (current_a_ref.is_some()
+        //         && current_b_ref.is_some()
+        //         && current_a_ref.unwrap().1 > current_b_ref.unwrap().1)
+        // {
+        //     let current2 = self.current_b.take();
+        //     self.current_b = self.iter_b.next();
+        //     return Some((None, current2));
+        // } else {
+        //     let current1 = self.current_a.take();
+        //     let current2 = self.current_b.take();
+        //     self.current_a = self.iter_a.next();
+        //     self.current_b = self.iter_b.next();
+        //     return Some((current1, current2));
+        // }
+    }
+}
