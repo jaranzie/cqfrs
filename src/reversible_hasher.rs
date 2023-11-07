@@ -1,9 +1,10 @@
 use std::hash::{BuildHasher, Hasher};
 
-/// Only supports types that are less that 64 bits wide
+/// Implements reversable hash function for values less than HASH_BITS (max 64 bits).
 #[derive(Clone, Copy, Default)]
 pub struct ReversibleHasher<const HASH_BITS: u64> {
     hash: u64,
+    // hash_bits: u64,
 }
 
 impl<const HASH_BITS: u64> ReversibleHasher<HASH_BITS> {

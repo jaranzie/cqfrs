@@ -1,22 +1,20 @@
-// use super::*;
 use super::{CountingQuotientFilter, RuntimeData, CqfError, Metadata, MetadataWrapper, SLOTS_PER_BLOCK, CqfIteratorImpl};
 use crate::{
-    blocks::{u64_blocks::*, Blocks},
+    blocks::{u64_soa_blocks::*, Blocks},
     utils::{bitselect, bitrank},
 };
-use std::{fs::File, hash::{BuildHasher, Hash}};
 /// Fixed size counter u64 quotient filter
 use std::{hash, os::fd::AsRawFd};
-
-pub struct U64Cqf<H: BuildHasher> {
+use std::{fs::File, hash::{BuildHasher, Hash}};
+pub struct U64SoaCqf<H: BuildHasher> {
     metadata: MetadataWrapper,
-    blocks: U64Blocks,
+    blocks: U64SoaBlocks,
     runtime_data: RuntimeData<H>,
 }
 
-impl<H: BuildHasher> CountingQuotientFilter for U64Cqf<H> {
+impl<H: BuildHasher> CountingQuotientFilter for U64SoaCqf<H> {
     type Hasher = H;
-    type Remainder = Remainder;
+
     fn new(
         quotient_bits: u64,
         hash_bits: u64,
@@ -137,7 +135,7 @@ impl<H: BuildHasher> CountingQuotientFilter for U64Cqf<H> {
         if *current_quotient < new_quotient {
             *current_quotient = new_quotient;
         }
-        *self.blocks.slot_mut(*current_quotient) = remainder;
+        *self.blocks.slot_mut(*current_quotient) = new_remainder;
         if count != 1 {
             self.blocks.set_count(*current_quotient + 1, true);
             *self.blocks.slot_mut(*current_quotient + 1) = count as Remainder;
@@ -244,7 +242,7 @@ impl<H: BuildHasher> CountingQuotientFilter for U64Cqf<H> {
         if runstart_index < quotient {
             runstart_index = quotient;
         }
-        // let mut current_end: u64;
+        let mut current_end: u64;
         let mut current_remainder: u64 = 0;
         let mut current_count: u64 = 0;
         loop {
@@ -267,43 +265,12 @@ impl<H: BuildHasher> CountingQuotientFilter for U64Cqf<H> {
         return 0;
     }
 
-    fn set_count_by_hash(&mut self, hash: u64, count: u64) -> Result<(), CqfError> {
-        let (quotient, remainder) = self.quotient_remainder_from_hash(hash);
-        // let runend_index = self.run_end(quotient);
-        let mut runstart_index = self.blocks.run_start(quotient);
-        let (mut current_remainder, mut current_count): (u64, u64) = (0, 0);
-        let mut qptr = runstart_index;
-        self.blocks
-            .decode_counter(&mut qptr, &mut current_remainder, &mut current_count);
-       
-        while current_remainder < remainder && !self.blocks.is_runend(qptr) {
-            runstart_index = qptr + 1;
-            self.blocks
-                .decode_counter(&mut qptr, &mut current_remainder, &mut current_count);
-        }
-        // println!("setting");
-        if current_remainder == remainder {
-            if self.blocks.is_count(runstart_index + 1) {
-                *self.blocks.slot_mut(runstart_index+1) = count;
-                return Ok(());
-            }
-            self.insert_and_shift(
-                if self.blocks.is_runend(qptr) {
-                    1
-                } else {
-                    2
-                },
-                quotient,
-                remainder,
-                count,
-                runstart_index,
-                qptr - runstart_index + 1,
-            );
-        } else {
-            return Err(CqfError::InvalidArguments); // error since we didn't find the remainder
-        };
+    fn set_count<Item: Hash>(&mut self, item: Item, count: u64) -> Result<(), CqfError> {
+        todo!()
+    }
 
-        Ok(())
+    fn set_count_by_hash(&mut self, hash: u64, count: u64) -> Result<(), CqfError> {
+        todo!()
     }
 
     fn occupied_slots(&self) -> u64 {
@@ -332,20 +299,16 @@ impl<H: BuildHasher> CountingQuotientFilter for U64Cqf<H> {
     fn build_hash(&self, quotient: u64, remainder: u64) -> u64 {
         (quotient << self.metadata.remainder_bits) | remainder
     }
-
-    fn is_file(&self) -> bool {
-        self.runtime_data.file.is_some()
-    }
 }
 
-impl<H: BuildHasher> U64Cqf<H> {
+impl<H: BuildHasher> U64SoaCqf<H> {
     fn make_metadata_blocks(
         quotient_bits: u64,
         hash_bits: u64,
         invertable: bool,
         file: Option<&mut File>,
         new: bool,
-    ) -> Result<(MetadataWrapper, U64Blocks), CqfError> {
+    ) -> Result<(MetadataWrapper, U64SoaBlocks), CqfError> {
         if hash_bits < quotient_bits
             || hash_bits > 64
             || hash_bits - quotient_bits > Remainder::BITS as u64
@@ -354,7 +317,7 @@ impl<H: BuildHasher> U64Cqf<H> {
             return Err(CqfError::InvalidArguments);
         }
         let mut metadata = Metadata::new(quotient_bits, hash_bits, invertable);
-        let blocks_size = U64Blocks::bytes_needed(metadata.num_blocks as usize);
+        let blocks_size = U64SoaBlocks::bytes_needed(metadata.num_blocks as usize);
         metadata.add_size(blocks_size as u64);
         println!("metadata.total_size_bytes: {}", metadata.total_size_bytes);
         let mmap_flags;
@@ -392,7 +355,7 @@ impl<H: BuildHasher> U64Cqf<H> {
             *metadata_wrapper = metadata;
         }
         let blocks_ptr = unsafe { buffer.offset(std::mem::size_of::<Metadata>() as isize) };
-        let blocks = U64Blocks::new(blocks_ptr as *mut u8, metadata_wrapper.num_blocks as usize);
+        let blocks = U64SoaBlocks::new(blocks_ptr as *mut u8, metadata_wrapper.num_blocks as usize);
         Ok((metadata_wrapper, blocks))
     }
 
@@ -505,7 +468,7 @@ impl<H: BuildHasher> U64Cqf<H> {
     }
 }
 
-impl<'a, H: BuildHasher + 'a> IntoIterator for U64Cqf<H> {
+impl<'a, H: BuildHasher + 'a> IntoIterator for U64SoaCqf<H> {
     type Item = (u64, u64);
     type IntoIter = U64ConsumingIterator<H>;
 
@@ -532,7 +495,7 @@ impl<'a, H: BuildHasher + 'a> IntoIterator for U64Cqf<H> {
 }
 
 pub struct U64ConsumingIterator<H: BuildHasher> {
-    cqf: U64Cqf<H>,
+    cqf: U64SoaCqf<H>,
     current_run_start: u64,
     current_quotient: u64,
     end: u64,
@@ -587,86 +550,7 @@ impl<H: BuildHasher> Iterator for U64ConsumingIterator<H> {
 
 impl<H: BuildHasher> CqfIteratorImpl for U64ConsumingIterator<H> {}
 
-pub struct U64RefIterator<'a, H: BuildHasher> {
-    cqf: &'a U64Cqf<H>,
-    current_run_start: u64,
-    current_quotient: u64,
-    end: u64,
-    num: u64,
-}
-
-impl<'a, H: BuildHasher> Iterator for U64RefIterator<'a, H> {
-    type Item = (u64, u64);
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current_quotient >= self.end {
-            return None;
-        }
-        let mut current_remainder: u64 = 0;
-        let mut current_count: u64 = 0;
-        self.cqf.blocks.decode_counter(
-            &mut self.current_quotient,
-            &mut current_remainder,
-            &mut current_count,
-        );
-        let current_hash = self
-            .cqf
-            .build_hash(self.current_run_start, current_remainder);
-        if !self.cqf.blocks.is_runend(self.current_quotient) {
-            self.current_quotient += 1;
-            return Some((current_count, current_hash));
-        }
-        self.current_quotient += 1;
-        let mut block_index = self.current_run_start as usize / SLOTS_PER_BLOCK;
-        let mut rank = bitrank(
-            self.cqf.blocks.occupieds_by_block(block_index),
-            self.current_run_start % SLOTS_PER_BLOCK as u64,
-        );
-        let mut next_run_slot = bitselect(self.cqf.blocks.occupieds_by_block(block_index), rank);
-        if next_run_slot == 64 {
-            rank = 0;
-            while next_run_slot == 64 && block_index < self.cqf.blocks.len()-1 {
-                block_index += 1;
-                next_run_slot = bitselect(self.cqf.blocks.occupieds_by_block(block_index), rank);
-            }
-        }
-        self.current_run_start = block_index as u64 * SLOTS_PER_BLOCK as u64 + next_run_slot;
-        if self.current_quotient < self.current_run_start {
-            self.current_quotient = self.current_run_start;
-        }
-        if self.num % (1 << 22) == 0 {
-            self.cqf.blocks.madvise_dont_need(self.current_run_start);
-        }
-        self.num += 1;
-        return Some((current_count, current_hash));
-    }
-}
-
-impl<H: BuildHasher> U64Cqf<H> {
-    pub fn iter(&self) -> U64RefIterator<H> {
-        if self.metadata.num_occupied_slots == 0 {
-            return U64RefIterator {
-                cqf: self,
-                current_run_start: 0,
-                current_quotient: 1,
-                end: 0,
-                num: 0,
-            };
-        }
-        let current_quotient = self.blocks.find_first_occupied_slot();
-        let num_slots = self.metadata.num_real_slots;
-        U64RefIterator {
-            cqf: self,
-            current_run_start: current_quotient,
-            current_quotient,
-            end: num_slots,
-            num: 0,
-        }
-    }
-}
-
-impl<H: BuildHasher> CqfIteratorImpl for U64RefIterator<'_, H> {}
-
-impl<H: BuildHasher> Drop for U64Cqf<H> {
+impl<H: BuildHasher> Drop for U64SoaCqf<H> {
     fn drop(&mut self) {
         let metadata_ptr = self.metadata.0.as_ptr();
         let bytes = self.metadata.total_size_bytes;

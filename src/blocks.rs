@@ -5,12 +5,13 @@ use crate::{
     SLOTS_PER_BLOCK,
 };
 
-pub mod soaos_u64_blocks;
+// pub mod u64_soa_blocks;
 pub mod u64_blocks;
+pub mod u32_blocks;
 
 pub trait Blocks {
     type Remainder;
-
+    #[inline(always)]
     fn split_quotient(quotient: u64) -> (usize, usize) {
         let block_index: usize = (quotient / crate::SLOTS_PER_BLOCK as u64) as usize;
         let slot_index: usize = (quotient % crate::SLOTS_PER_BLOCK as u64) as usize;
@@ -27,14 +28,14 @@ pub trait Blocks {
 
     // Assumes quotient holds a remainder
     fn decode_counter(&self, quotient: &mut u64, remainder: &mut Self::Remainder, count: &mut u64);
-
+    #[inline]
     fn run_end(&self, quotient: u64) -> u64 {
         let (block_index, slot_index) = Self::split_quotient(quotient);
         let block_offset: u64 = self.offset_by_block(block_index).into();
         let intrablock_rank = bitrank(self.occupieds_by_block(block_index), slot_index as u64);
 
         if intrablock_rank == 0 {
-            if block_offset == 0 {
+            if block_offset <= slot_index as u64 {
                 return quotient;
             } else {
                 return 64 * block_index as u64 + block_offset as u64 - 1;
@@ -81,13 +82,14 @@ pub trait Blocks {
         }
     }
 
-    fn run_end_by_block(&self, block: usize, slot: usize) -> u64 {
-        let runend = self.runends_by_block(block);
-        if slot == 0 {
-            runend
-        } else {
-            runend & ((1 << slot) - 1)
-        }
+    fn run_end_by_block(&self, _block: usize, _slot: usize) -> u64 {
+        panic!("problem");
+        // let runend = self.runends_by_block(block);
+        // if slot == 0 {
+        //     runend
+        // } else {
+        //     runend & ((1 << slot) - 1)
+        // }
     }
 
     fn bytes_needed(num_blocks: usize) -> usize;
@@ -139,10 +141,10 @@ pub trait Blocks {
     }
 
     fn offset_lower_bound_by_block(&self, block: usize, slot: usize) -> u64 {
-        let offset_u64 = self.offset_by_block(block) as u64;
         let occupieds = self.occupieds_by_block(block) & bitmask((slot + 1) as u64);
+        let offset_u64 = self.offset_by_block(block) as u64;
         if offset_u64 <= slot as u64 {
-            let runends = self.runends_by_block(block) & bitmask((slot + 1) as u64);
+            let runends = (self.runends_by_block(block) & bitmask((slot) as u64)) >> offset_u64;
             return (occupieds.count_ones() - runends.count_ones()) as u64;
         } else {
             return (offset_u64 + occupieds.count_ones() as u64) - slot as u64;
@@ -185,4 +187,7 @@ pub trait Blocks {
     fn madvise_dont_need(&self, current_quotient: u64);
 
     fn num_blocks(&self) -> usize;
+
+    /// Returns number of blocks in the CQF
+    fn len(&self) -> usize;
 }

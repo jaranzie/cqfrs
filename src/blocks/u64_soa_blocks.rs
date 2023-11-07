@@ -1,38 +1,46 @@
+
 use libc::c_void;
 
 use super::{Blocks, Offset};
 use crate::SLOTS_PER_BLOCK;
-use std::ops::{Deref, DerefMut};
 use std::ptr::Unique;
 pub type Remainder = u64;
 
 #[repr(C)]
 pub struct Block {
-    occupieds: u64,
-    runends: u64,
-    counts: u64,
     remainders: [Remainder; SLOTS_PER_BLOCK],
-    offset: u16,
-    // padding: [u16; 3],
 }
 
-pub struct U64Blocks {
-    ptr: Unique<Block>,
+pub struct U64SoaBlocks {
+    ptr_metadata: Unique<BlockMetadata>,
+    ptr_blocks: Unique<Block>,
     len: usize,
 }
 
-impl U64Blocks {
+impl U64SoaBlocks {
     pub fn new(ptr: *mut u8, len: usize) -> Self {
-        let ptr = unsafe { Unique::new_unchecked(ptr as *mut Block) };
-        Self { ptr, len }
+        if ptr.is_null() {
+            panic!("ptr is null");
+        }
+        let ptr_metadata = unsafe { Unique::new_unchecked(ptr as *mut BlockMetadata) };
+        let ptr_blocks = unsafe { ptr_metadata.as_ptr().offset(len as isize) } as *mut Block;
+        let ptr_blocks = unsafe { Unique::new_unchecked(ptr_blocks) };
+        Self {
+            ptr_metadata,
+            ptr_blocks,
+            len,
+        }
     }
 }
 
-impl Blocks for U64Blocks {
+impl Blocks for U64SoaBlocks {
     type Remainder = Remainder;
 
     fn bytes_needed(num_blocks: usize) -> usize {
-        num_blocks * std::mem::size_of::<Block>()
+        let mut size = 0;
+        size += num_blocks * std::mem::size_of::<Block>();
+        size += num_blocks * std::mem::size_of::<BlockMetadata>();
+        size
     }
 
     fn offset(&self, quotient: u64) -> Offset {
@@ -130,78 +138,78 @@ impl Blocks for U64Blocks {
 
     #[inline(always)]
     fn offset_by_block(&self, block: usize) -> Offset {
-        self[block].offset as Offset
+        self.metadata()[block].offset as Offset
     }
 
     #[inline(always)]
     fn offset_by_block_mut(&mut self, block: usize) -> &mut Offset {
-        &mut self[block].offset
+        &mut self.metadata_mut()[block].offset
     }
 
     #[inline(always)]
     fn occupieds_by_block(&self, block: usize) -> u64 {
-        self[block].occupieds
+        self.metadata()[block].occupieds
     }
 
     #[inline(always)]
     fn runends_by_block(&self, block: usize) -> u64 {
-        self[block].runends
+        self.metadata()[block].runends
     }
 
     #[inline(always)]
     fn counts_by_block(&self, block: usize) -> u64 {
-        self[block].counts
+        self.metadata()[block].counts
     }
 
     #[inline(always)]
     fn slot_by_block(&self, block: usize, slot: usize) -> &Self::Remainder {
-        &self[block].remainders[slot]
+        &self.block()[block].remainders[slot]
     }
 
     #[inline(always)]
     fn slot_by_block_mut(&mut self, block: usize, slot: usize) -> &mut Self::Remainder {
-        &mut self[block].remainders[slot]
+        &mut self.block_mut()[block].remainders[slot]
     }
 
     #[inline(always)]
     fn is_occupied_by_block(&self, block: usize, slot: usize) -> bool {
-        self[block].occupieds & (1 << slot) != 0
+        self.metadata()[block].occupieds & (1 << slot) != 0
     }
 
     #[inline(always)]
     fn is_runend_by_block(&self, block: usize, slot: usize) -> bool {
-        self[block].runends & (1 << slot) != 0
+        self.metadata()[block].runends & (1 << slot) != 0
     }
 
     #[inline(always)]
     fn is_count_by_block(&self, block: usize, slot: usize) -> bool {
-        self[block].counts & (1 << slot) != 0
+        self.metadata()[block].counts & (1 << slot) != 0
     }
 
     #[inline(always)]
     fn set_occupied_by_block(&mut self, block: usize, slot: usize, bit: bool) {
         if bit {
-            self[block].occupieds |= 1 << slot;
+            self.metadata_mut()[block].occupieds |= 1 << slot;
         } else {
-            self[block].occupieds &= !(1 << slot);
+            self.metadata_mut()[block].occupieds &= !(1 << slot);
         }
     }
 
     #[inline(always)]
     fn set_runend_by_block(&mut self, block: usize, slot: usize, bit: bool) {
         if bit {
-            self[block].runends |= 1 << slot;
+            self.metadata_mut()[block].runends |= 1 << slot;
         } else {
-            self[block].runends &= !(1 << slot);
+            self.metadata_mut()[block].runends &= !(1 << slot);
         }
     }
 
     #[inline(always)]
     fn set_count_by_block(&mut self, block: usize, slot: usize, bit: bool) {
         if bit {
-            self[block].counts |= 1 << slot;
+            self.metadata_mut()[block].counts |= 1 << slot;
         } else {
-            self[block].counts &= !(1 << slot);
+            self.metadata_mut()[block].counts &= !(1 << slot);
         }
     }
 
@@ -211,7 +219,7 @@ impl Blocks for U64Blocks {
     }
 
     fn madvise_dont_need(&self, current_quotient: u64) {
-        let ptr_start = self.ptr.as_ptr() as *mut c_void;
+        let ptr_start = self.ptr_blocks.as_ptr() as *mut c_void;
         let aligned_ptr_start = unsafe { ptr_start.offset(ptr_start.align_offset(4096) as isize) };
         let ptr_end =
             unsafe { (self.slot(current_quotient) as *const Self::Remainder).offset(-4096) };
@@ -229,17 +237,45 @@ impl Blocks for U64Blocks {
     }
 }
 
-impl Deref for U64Blocks {
-    type Target = [Block];
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+// impl Deref for U64SoaBlocks {
+//     type Target = [Block];
+//     #[inline(always)]
+//     fn deref(&self) -> &Self::Target {
+//         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+//     }
+// }
+
+// impl DerefMut for U64SoaBlocks {
+//     #[inline(always)]
+//     fn deref_mut(&mut self) -> &mut [Block] {
+//         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+//     }
+// }
+
+impl U64SoaBlocks {
+    fn metadata(&self) -> &[BlockMetadata] {
+        unsafe { std::slice::from_raw_parts(self.ptr_metadata.as_ptr(), self.len) }
+    }
+
+    fn metadata_mut(&mut self) -> &mut [BlockMetadata] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr_metadata.as_ptr(), self.len) }
+    }
+
+    fn block(&self) -> &[Block] {
+        unsafe { std::slice::from_raw_parts(self.ptr_blocks.as_ptr(), self.len) }
+    }
+
+    fn block_mut(&mut self) -> &mut [Block] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr_blocks.as_ptr(), self.len) }
     }
 }
 
-impl DerefMut for U64Blocks {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut [Block] {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
-    }
+
+
+
+pub struct BlockMetadata {
+    occupieds: u64,
+    runends: u64,
+    counts: u64,
+    offset: u16,
 }

@@ -4,7 +4,7 @@ use super::{Blocks, Offset};
 use crate::SLOTS_PER_BLOCK;
 use std::ops::{Deref, DerefMut};
 use std::ptr::Unique;
-pub type Remainder = u64;
+pub type Remainder = u32;
 
 #[repr(C)]
 pub struct Block {
@@ -16,19 +16,19 @@ pub struct Block {
     // padding: [u16; 3],
 }
 
-pub struct U64Blocks {
+pub struct U32Blocks {
     ptr: Unique<Block>,
     len: usize,
 }
 
-impl U64Blocks {
+impl U32Blocks {
     pub fn new(ptr: *mut u8, len: usize) -> Self {
         let ptr = unsafe { Unique::new_unchecked(ptr as *mut Block) };
         Self { ptr, len }
     }
 }
 
-impl Blocks for U64Blocks {
+impl Blocks for U32Blocks {
     type Remainder = Remainder;
 
     fn bytes_needed(num_blocks: usize) -> usize {
@@ -48,7 +48,7 @@ impl Blocks for U64Blocks {
             *count = 1;
         } else {
             // Only works for u64
-            *count = *self.slot(*quotient + 1);
+            *count = *self.slot(*quotient + 1) as u64;
             *quotient += 1;
             // let mut qptr = *quotient + 1;
             // let mut c: u64 = 0;
@@ -229,7 +229,7 @@ impl Blocks for U64Blocks {
     }
 }
 
-impl Deref for U64Blocks {
+impl Deref for U32Blocks {
     type Target = [Block];
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -237,7 +237,7 @@ impl Deref for U64Blocks {
     }
 }
 
-impl DerefMut for U64Blocks {
+impl DerefMut for U32Blocks {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [Block] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }

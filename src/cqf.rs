@@ -2,12 +2,7 @@ use std::{
     fs::File,
     hash::{BuildHasher, Hash},
 };
-
 use crate::SLOTS_PER_BLOCK;
-
-// pub trait HasherT: BuildHasher {}
-
-// impl<T> HasherT for T where T: BuildHasher {}
 
 struct MetadataWrapper(std::ptr::Unique<Metadata>);
 
@@ -19,7 +14,7 @@ impl MetadataWrapper {
 }
 
 #[repr(C)]
-pub struct Metadata {
+struct Metadata {
     pub total_size_bytes: u64,
     pub num_real_slots: u64,
     pub num_occupied_slots: u64,
@@ -86,6 +81,8 @@ impl<H: BuildHasher> RuntimeData<H> {
     }
 }
 
+
+#[derive(Debug)]
 pub enum CqfError {
     InvalidArguments,
     FileError,
@@ -97,6 +94,7 @@ pub enum CqfError {
 
 pub trait CountingQuotientFilter: IntoIterator + Sized {
     type Hasher: BuildHasher;
+    type Remainder: Copy + Clone + Default + std::fmt::Debug;
 
     fn new(
         quotient_bits: u64,
@@ -161,7 +159,7 @@ pub trait CountingQuotientFilter: IntoIterator + Sized {
 
     fn max_occupied_slots(&self) -> u64;
 
-    fn quotient_remainder_from_hash(&self, hash: u64) -> (u64, u64);
+    fn quotient_remainder_from_hash(&self, hash: u64) -> (u64, Self::Remainder);
 
     fn calc_hash<Item: Hash>(&self, item: Item) -> u64;
 
@@ -176,6 +174,7 @@ pub trait CountingQuotientFilter: IntoIterator + Sized {
 
     fn build_hash(&self, quotient: u64, remainder: u64) -> u64;
 
+    fn is_file(&self) -> bool;
     
 }
 
@@ -191,52 +190,8 @@ pub trait CountingQuotientFilter: IntoIterator + Sized {
 
 // }
 
+
 pub trait CqfIteratorImpl: Iterator {}
-
-impl<'a, T: CountingQuotientFilter> CqfIteratorImpl for GenericCqfIter<'a, T> {}
-
-pub struct GenericCqfIter<'a, CqfT: CountingQuotientFilter> {
-    cqf: &'a CqfT,
-    run_start: u64,
-    current_quotient: u64,
-    end: u64,
-}
-
-// pub struct GenericConsumingCqfIterator<CqfT: CountingQuotientFilter> {
-//     cqf: CqfT,
-//     current_run_start: u64,
-//     current_quotient: u64,
-//     end: u64,
-// }
-
-// impl<CqfT: CountingQuotientFilter> Iterator for GenericConsumingCqfIterator<CqfT> {
-//     type Item = (u64, u64);
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         todo!();
-//     }
-// }
-
-// impl<T: CountingQuotientFilter> CqfIteratorImpl for GenericConsumingCqfIterator<T> {}
-
-impl<'a, CqfT: CountingQuotientFilter> Iterator for GenericCqfIter<'a, CqfT> {
-    type Item = (u64, u64);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current_quotient >= self.end {
-            return None;
-        }
-
-        Some((0, 0))
-    }
-}
-
-impl<'a, CqfT: CountingQuotientFilter> GenericCqfIter<'a, CqfT> {}
-
-// pub trait CqfRefIter<'a> {
-//     type RefCqfIterator: Iterator + 'a;
-//     fn iter(&'a self) -> Self::RefCqfIterator;
-// }
 
 pub trait CqfMergeClosure: Sized {
     fn merge_cb<'a, CqfT: CountingQuotientFilter>(
@@ -251,4 +206,11 @@ pub trait CqfMergeClosure: Sized {
     );
 }
 
+
+
 mod u64_cqf;
+pub use u64_cqf::*;
+mod u32_cqf;
+pub use u32_cqf::*;
+
+
