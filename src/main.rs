@@ -1,7 +1,7 @@
 // use cqfrs::{BuildReversableHasher, CountingQuotientFilter, ReversibleHasher};
+use cqfrs::*;
 use rand::Rng;
 use std::{collections::HashMap, time::Duration};
-use cqfrs::*;
 
 const LOGN_SLOTS: u64 = 28;
 
@@ -13,14 +13,29 @@ fn main() {
     // let num_elemnts: usize = ((1 << (LOGN_SLOTS-3)) as f32 * 0.90) as usize;
     let numbers = test_init(num_elements, TEST_MASK);
 
-    let mut cqf1 = U64Cqf::new(LOGN_SLOTS, HASH_BITS, true, BuildReversableHasher::<46>::default())
-        .expect("failed to make cqf");
+    let mut cqf1 = U64Cqf::new(
+        LOGN_SLOTS,
+        HASH_BITS,
+        true,
+        BuildReversableHasher::<46>::default(),
+    )
+    .expect("failed to make cqf");
 
-    let mut cqf2 = U32Cqf::new(LOGN_SLOTS, HASH_BITS, true, BuildReversableHasher::<46>::default())
-        .expect("failed to make cqf");
+    let mut cqf2 = U32Cqf::new(
+        LOGN_SLOTS,
+        HASH_BITS,
+        true,
+        BuildReversableHasher::<46>::default(),
+    )
+    .expect("failed to make cqf");
 
-    let mut cqf3 = U32Cqf::new(LOGN_SLOTS+1, HASH_BITS, true, BuildReversableHasher::<46>::default())
-        .expect("failed to make cqf");
+    let mut cqf3 = U32Cqf::new(
+        LOGN_SLOTS + 1,
+        HASH_BITS,
+        true,
+        BuildReversableHasher::<46>::default(),
+    )
+    .expect("failed to make cqf");
 
     // let mut cqf = OldCqf::new(LOGN_SLOTS, HASH_BITS, true, BuildReversableHasher::<46>::default())
 
@@ -35,24 +50,26 @@ fn main() {
 
     println!("Starting insert");
     let now = std::time::Instant::now();
-    for i in 0..num_elements/2 {
-        cqf1.insert(numbers[i] & TEST_MASK, 1).expect("insert failed!");
+    for i in 0..num_elements / 2 {
+        cqf1.insert(numbers[i] & TEST_MASK, 1)
+            .expect("insert failed!");
     }
-    for i in num_elements/2..num_elements {
-        cqf2.insert(numbers[i] & TEST_MASK, 1).expect("insert failed!");
+    for i in num_elements / 2..num_elements {
+        cqf2.insert(numbers[i] & TEST_MASK, 1)
+            .expect("insert failed!");
     }
     println!("Insert took {:?}", now.elapsed());
 
     CqfMerge::merge(cqf1.into_iter(), cqf2.into_iter(), &mut cqf3);
 
-    for (&k,&v) in temp.iter() {
+    for (&k, &v) in temp.iter() {
         let count = cqf3.query(k);
         assert_eq!(count.0, v);
     }
 
     let now = std::time::Instant::now();
     println!("Starting iter");
-    for (c,h) in cqf3.into_iter() {
+    for (c, h) in cqf3.into_iter() {
         let og = ReversibleHasher::<46>::invert_hash(h);
         let count = temp.get(&og).unwrap();
         assert_eq!(count, &c);
@@ -93,18 +110,18 @@ mod tests {
         let mut cqf = U64Cqf::new(LOGN_SLOTS, 64, true, BuildReversableHasher::<46>::default())
             .expect("failed to make cqf");
 
-        let mut temp: HashMap<u64,u64> = HashMap::new();
+        let mut temp: HashMap<u64, u64> = HashMap::new();
         for i in 0..elements.len() {
             cqf.insert(elements[i], 1).expect("insert failed!");
             temp.insert(elements[i], temp.get(&elements[i]).unwrap_or(&0) + 1);
         }
 
-        for (&k,&v) in temp.iter() {
+        for (&k, &v) in temp.iter() {
             let count = cqf.query(k);
             assert_eq!(count.0, v);
         }
 
-        for (c,h) in cqf.into_iter() {
+        for (c, h) in cqf.into_iter() {
             let og = ReversibleHasher::<46>::invert_hash(h);
             let count = temp.get(&og).unwrap();
             assert_eq!(count, &c);
@@ -118,18 +135,18 @@ mod tests {
         let mut cqf = U64Cqf::new(LOGN_SLOTS, 64, true, BuildReversableHasher::<46>::default())
             .expect("failed to make cqf");
 
-        let mut temp: HashMap<u64,u64> = HashMap::new();
+        let mut temp: HashMap<u64, u64> = HashMap::new();
         for i in 0..elements.len() {
             cqf.insert(elements[i], 1).expect("insert failed!");
             temp.insert(elements[i], temp.get(&elements[i]).unwrap_or(&0) + 1);
         }
 
-        for (&k,&v) in temp.iter() {
+        for (&k, &v) in temp.iter() {
             let count = cqf.query(k);
             assert_eq!(count.0, v);
         }
 
-        for (c,h) in cqf.iter() {
+        for (c, h) in cqf.iter() {
             let og = ReversibleHasher::<46>::invert_hash(h);
             let count = temp.get(&og).unwrap();
             assert_eq!(count, &c);
@@ -143,18 +160,18 @@ mod tests {
         let mut cqf = U32Cqf::new(LOGN_SLOTS, 64, true, BuildReversableHasher::<46>::default())
             .expect("failed to make cqf");
 
-        let mut temp: HashMap<u64,u64> = HashMap::new();
+        let mut temp: HashMap<u64, u64> = HashMap::new();
         for i in 0..elements.len() {
             cqf.insert(elements[i], 1).expect("insert failed!");
             temp.insert(elements[i], temp.get(&elements[i]).unwrap_or(&0) + 1);
         }
 
-        for (&k,&v) in temp.iter() {
+        for (&k, &v) in temp.iter() {
             let count = cqf.query(k);
             assert_eq!(count.0, v);
         }
 
-        for (c,h) in cqf.into_iter() {
+        for (c, h) in cqf.into_iter() {
             let og = ReversibleHasher::<46>::invert_hash(h);
             let count = temp.get(&og).unwrap();
             assert_eq!(count, &c);
@@ -168,26 +185,24 @@ mod tests {
         let mut cqf = U32Cqf::new(LOGN_SLOTS, 64, true, BuildReversableHasher::<46>::default())
             .expect("failed to make cqf");
 
-        let mut temp: HashMap<u64,u64> = HashMap::new();
+        let mut temp: HashMap<u64, u64> = HashMap::new();
         for i in 0..elements.len() {
             cqf.insert(elements[i], 1).expect("insert failed!");
             temp.insert(elements[i], temp.get(&elements[i]).unwrap_or(&0) + 1);
         }
 
-        for (&k,&v) in temp.iter() {
+        for (&k, &v) in temp.iter() {
             let count = cqf.query(k);
             assert_eq!(count.0, v);
         }
 
-        for (c,h) in cqf.iter() {
+        for (c, h) in cqf.iter() {
             let og = ReversibleHasher::<46>::invert_hash(h);
             let count = temp.get(&og).unwrap();
             assert_eq!(count, &c);
         }
     }
 }
-
-
 
 // fn main() {
 //     let n_strings: usize = ((1 << (LOGN_SLOTS-1)) as f32 * 0.9) as usize;
@@ -702,5 +717,3 @@ mod tests {
 
 // // let qf = CountingQuotientFilter::new_file(25,25,HashMode::Invertible, "test.qf".into()).expect("failed to make cqf");
 // // }
-
-

@@ -3,16 +3,15 @@
 #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 mod blocks;
-mod reversible_hasher;
 mod cqf;
+mod reversible_hasher;
 // mod utils;
 const SLOTS_PER_BLOCK: usize = 64;
 // mod old_cqf;
 // pub use old_cqf::CountingQuotientFilter as OldCqf;
 
-pub use reversible_hasher::*;
 pub use cqf::*;
-
+pub use reversible_hasher::*;
 
 // pub use reversible_hasher::*;
 // use std::hash::BuildHasher;
@@ -28,7 +27,6 @@ pub use cqf::*;
 // // pub use cqf_u64::CqfMergeCallback;
 // // pub use cqf_u64::HashCount;
 // // pub use cqf_u64::ZippedCqfIterator;
-
 
 // #[derive(Debug)]
 // pub enum CqfError {

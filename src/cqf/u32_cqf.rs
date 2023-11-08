@@ -1,11 +1,17 @@
-use super::{CountingQuotientFilter, RuntimeData, CqfError, Metadata, MetadataWrapper, SLOTS_PER_BLOCK, CqfIteratorImpl};
+use super::{
+    CountingQuotientFilter, CqfError, CqfIteratorImpl, Metadata, MetadataWrapper, RuntimeData,
+    SLOTS_PER_BLOCK,
+};
 use crate::{
     blocks::{u32_blocks::*, Blocks},
-    utils::{bitselect, bitrank},
+    utils::{bitrank, bitselect},
+};
+use std::{
+    fs::File,
+    hash::{BuildHasher, Hash},
 };
 /// Fixed size counter u64 quotient filter
 use std::{hash, os::fd::AsRawFd};
-use std::{fs::File, hash::{BuildHasher, Hash}};
 pub struct U32Cqf<H: BuildHasher> {
     metadata: MetadataWrapper,
     blocks: U32Blocks,
@@ -182,7 +188,7 @@ impl<H: BuildHasher> CountingQuotientFilter for U32Cqf<H> {
         //     println!("Runstart {runstart_index} Runend {runend_index} Quotient {quotient}");
         // }
         if !self.blocks.has_metadata_bits_set(quotient) && runstart_index == quotient {
-        // if !self.blocks.has_metadata_bits_set(quotient) && runend_index == quotient {
+            // if !self.blocks.has_metadata_bits_set(quotient) && runend_index == quotient {
             // if runstart_index != runend_index {
             //     println!("Runstart {runstart_index} Runend {runend_index} Quotient {quotient}");
             // }
@@ -276,7 +282,7 @@ impl<H: BuildHasher> CountingQuotientFilter for U32Cqf<H> {
         let mut qptr = runstart_index;
         self.blocks
             .decode_counter(&mut qptr, &mut current_remainder, &mut current_count);
-       
+
         while current_remainder < remainder && !self.blocks.is_runend(qptr) {
             runstart_index = qptr + 1;
             self.blocks
@@ -285,15 +291,11 @@ impl<H: BuildHasher> CountingQuotientFilter for U32Cqf<H> {
         // println!("setting");
         if current_remainder == remainder {
             if self.blocks.is_count(runstart_index + 1) {
-                *self.blocks.slot_mut(runstart_index+1) = count as Remainder;
+                *self.blocks.slot_mut(runstart_index + 1) = count as Remainder;
                 return Ok(());
             }
             self.insert_and_shift(
-                if self.blocks.is_runend(qptr) {
-                    1
-                } else {
-                    2
-                },
+                if self.blocks.is_runend(qptr) { 1 } else { 2 },
                 quotient,
                 remainder,
                 count,
@@ -365,7 +367,8 @@ impl<H: BuildHasher> U32Cqf<H> {
                 fd = f.as_raw_fd();
                 mmap_flags = libc::MAP_SHARED;
                 if new {
-                    f.set_len(metadata.total_size_bytes as u64).map_err(|_| CqfError::FileError)?;
+                    f.set_len(metadata.total_size_bytes as u64)
+                        .map_err(|_| CqfError::FileError)?;
                 }
             }
             None => {
@@ -568,7 +571,7 @@ impl<H: BuildHasher> Iterator for U32ConsumingIterator<H> {
         let mut next_run_slot = bitselect(self.cqf.blocks.occupieds_by_block(block_index), rank);
         if next_run_slot == 64 {
             rank = 0;
-            while next_run_slot == 64 && block_index < self.cqf.blocks.len()-1 {
+            while next_run_slot == 64 && block_index < self.cqf.blocks.len() - 1 {
                 block_index += 1;
                 next_run_slot = bitselect(self.cqf.blocks.occupieds_by_block(block_index), rank);
             }
@@ -624,7 +627,7 @@ impl<'a, H: BuildHasher> Iterator for U32RefIterator<'a, H> {
         let mut next_run_slot = bitselect(self.cqf.blocks.occupieds_by_block(block_index), rank);
         if next_run_slot == 64 {
             rank = 0;
-            while next_run_slot == 64 && block_index < self.cqf.blocks.len()-1 {
+            while next_run_slot == 64 && block_index < self.cqf.blocks.len() - 1 {
                 block_index += 1;
                 next_run_slot = bitselect(self.cqf.blocks.occupieds_by_block(block_index), rank);
             }

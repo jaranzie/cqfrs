@@ -6,8 +6,8 @@ use crate::{
 };
 
 // pub mod u64_soa_blocks;
-pub mod u64_blocks;
 pub mod u32_blocks;
+pub mod u64_blocks;
 
 pub trait Blocks {
     type Remainder;

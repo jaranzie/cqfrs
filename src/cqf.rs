@@ -1,8 +1,8 @@
+use crate::SLOTS_PER_BLOCK;
 use std::{
     fs::File,
     hash::{BuildHasher, Hash},
 };
-use crate::SLOTS_PER_BLOCK;
 
 struct MetadataWrapper(std::ptr::Unique<Metadata>);
 
@@ -80,7 +80,6 @@ impl<H: BuildHasher> RuntimeData<H> {
         }
     }
 }
-
 
 #[derive(Debug)]
 pub enum CqfError {
@@ -175,7 +174,6 @@ pub trait CountingQuotientFilter: IntoIterator + Sized {
     fn build_hash(&self, quotient: u64, remainder: u64) -> u64;
 
     fn is_file(&self) -> bool;
-    
 }
 
 // fn set_count_by_hash_cb<F: FnMut(u64) -> u64>(&mut self, hash: u64, count: u64, cb: F) -> Result<u64, CqfError>;
@@ -195,7 +193,7 @@ pub use u64_cqf::*;
 mod u32_cqf;
 pub use u32_cqf::*;
 
-pub trait CqfIteratorImpl: Iterator<Item = (u64,u64)> {}
+pub trait CqfIteratorImpl: Iterator<Item = (u64, u64)> {}
 
 pub trait CqfMergeClosure: Sized {
     fn merge_cb<CqfT: CountingQuotientFilter>(
@@ -213,7 +211,11 @@ pub trait CqfMergeClosure: Sized {
 pub struct CqfMerge();
 
 impl CqfMerge {
-    pub fn merge<T: CountingQuotientFilter>(mut iter_a: impl CqfIteratorImpl, mut iter_b: impl CqfIteratorImpl, new_cqf: &mut T) {
+    pub fn merge<T: CountingQuotientFilter>(
+        mut iter_a: impl CqfIteratorImpl,
+        mut iter_b: impl CqfIteratorImpl,
+        new_cqf: &mut T,
+    ) {
         let mut current_a = iter_a.next();
         let mut current_b = iter_b.next();
         let mut merged_cqf_current_quotient = 0u64;
@@ -223,8 +225,8 @@ impl CqfMerge {
             let insert_count: u64;
             let next_quotient_: u64;
             {
-                let (a_quotient, a_remainder): (u64,u64);
-                let (b_quotient, b_remainder): (u64,u64);
+                let (a_quotient, a_remainder): (u64, u64);
+                let (b_quotient, b_remainder): (u64, u64);
                 let a_count;
                 let b_count;
                 {
@@ -259,7 +261,8 @@ impl CqfMerge {
                     insert_remainder = b_remainder;
                     current_b = iter_b.next();
                 }
-                next_quotient_ = Self::next_quotient(new_cqf, &current_a, &current_b, insert_quotient);
+                next_quotient_ =
+                    Self::next_quotient(new_cqf, &current_a, &current_b, insert_quotient);
             }
             new_cqf.merge_insert(
                 &mut merged_cqf_current_quotient,
@@ -311,7 +314,12 @@ impl CqfMerge {
         }
     }
 
-    pub fn merge_by<T: CountingQuotientFilter>(mut iter_a: impl CqfIteratorImpl, mut iter_b: impl CqfIteratorImpl, new_cqf: &mut T, closure: &mut impl CqfMergeClosure) {
+    pub fn merge_by<T: CountingQuotientFilter>(
+        mut iter_a: impl CqfIteratorImpl,
+        mut iter_b: impl CqfIteratorImpl,
+        new_cqf: &mut T,
+        closure: &mut impl CqfMergeClosure,
+    ) {
         let mut current_a = iter_a.next();
         let mut current_b = iter_b.next();
         let mut merged_cqf_current_quotient = 0u64;
@@ -321,8 +329,8 @@ impl CqfMerge {
             let insert_count: u64;
             let next_quotient_: u64;
             {
-                let (a_quotient, a_remainder): (u64,u64);
-                let (b_quotient, b_remainder): (u64,u64);
+                let (a_quotient, a_remainder): (u64, u64);
+                let (b_quotient, b_remainder): (u64, u64);
                 let mut a_count;
                 let mut b_count;
                 {
@@ -336,7 +344,7 @@ impl CqfMerge {
                     b_count = b_val.0;
                 }
                 let a_remainder: u64 = a_remainder.into();
-                    let b_remainder: u64 = b_remainder.into();
+                let b_remainder: u64 = b_remainder.into();
                 closure.merge_cb(
                     new_cqf,
                     a_quotient,
@@ -366,7 +374,8 @@ impl CqfMerge {
                     insert_remainder = b_remainder;
                     current_b = iter_b.next();
                 }
-                next_quotient_ = Self::next_quotient(new_cqf, &current_a, &current_b, insert_quotient);
+                next_quotient_ =
+                    Self::next_quotient(new_cqf, &current_a, &current_b, insert_quotient);
             }
             new_cqf.merge_insert(
                 &mut merged_cqf_current_quotient,
@@ -436,7 +445,12 @@ impl CqfMerge {
         }
     }
 
-    fn next_quotient(new_cqf: &impl CountingQuotientFilter, a: &Option<(u64, u64)>, b: &Option<(u64, u64)>, current_quotient: u64) -> u64 {
+    fn next_quotient(
+        new_cqf: &impl CountingQuotientFilter,
+        a: &Option<(u64, u64)>,
+        b: &Option<(u64, u64)>,
+        current_quotient: u64,
+    ) -> u64 {
         match (a, b) {
             (Some(a_val), Some(b_val)) => {
                 let a_quotient = new_cqf.quotient_remainder_from_hash(a_val.1).0;
@@ -462,7 +476,7 @@ pub struct ZippedCqfIter<A: CqfIteratorImpl, B: CqfIteratorImpl> {
 }
 
 impl<A: CqfIteratorImpl, B: CqfIteratorImpl> ZippedCqfIter<A, B> {
-    fn new(mut iter_a: A, mut iter_b: B) -> Self {
+    pub fn new(mut iter_a: A, mut iter_b: B) -> Self {
         let current_a = iter_a.next();
         let current_b = iter_b.next();
         Self {
@@ -475,7 +489,7 @@ impl<A: CqfIteratorImpl, B: CqfIteratorImpl> ZippedCqfIter<A, B> {
 }
 
 impl<A: CqfIteratorImpl, B: CqfIteratorImpl> Iterator for ZippedCqfIter<A, B> {
-    type Item = (Option<(u64,u64)>, Option<(u64,u64)>);
+    type Item = (Option<(u64, u64)>, Option<(u64, u64)>);
     fn next(&mut self) -> Option<Self::Item> {
         match (self.current_a, self.current_b) {
             (None, None) => None,
