@@ -65,6 +65,7 @@ impl Metadata {
     }
 }
 
+
 struct RuntimeData<H: BuildHasher> {
     pub file: Option<File>,
     pub hasher: H,
@@ -174,6 +175,8 @@ pub trait CountingQuotientFilter: IntoIterator + Sized {
     fn build_hash(&self, quotient: u64, remainder: u64) -> u64;
 
     fn is_file(&self) -> bool;
+
+    fn serialize_to_bytes(&self) -> &[u8];
 }
 
 // fn set_count_by_hash_cb<F: FnMut(u64) -> u64>(&mut self, hash: u64, count: u64, cb: F) -> Result<u64, CqfError>;

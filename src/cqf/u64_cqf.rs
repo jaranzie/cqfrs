@@ -341,6 +341,17 @@ impl<H: BuildHasher> CountingQuotientFilter for U64Cqf<H> {
     fn is_file(&self) -> bool {
         self.runtime_data.file.is_some()
     }
+
+    fn serialize_to_bytes(&self) -> &[u8] {
+        let metadata_ptr = self.metadata.0.as_ptr();
+        let metadata_bytes = self.metadata.total_size_bytes;
+        unsafe {
+            std::slice::from_raw_parts(
+                metadata_ptr as *const u8,
+                metadata_bytes as usize,
+            )
+        }
+    }
 }
 
 impl<H: BuildHasher> U64Cqf<H> {
