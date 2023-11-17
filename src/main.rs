@@ -47,7 +47,7 @@ fn main() {
         temp.insert(numbers[i] & TEST_MASK, count);
     }
     println!("Map built");
-    std::thread::sleep(Duration::from_secs(5));
+    // std::thread::sleep(Duration::from_secs(5));
 
     println!("Starting insert");
     let now = std::time::Instant::now();

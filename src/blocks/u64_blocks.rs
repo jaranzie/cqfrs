@@ -235,6 +235,17 @@ impl Blocks for U64Blocks {
         }
     }
 
+    fn advise_normal(&self) {
+        let ptr_start = self.ptr.as_ptr() as *mut c_void;
+        let aligned_ptr_start = unsafe { ptr_start.offset(ptr_start.align_offset(4096) as isize) };
+        let ptr_end = unsafe { (self.ptr.as_ptr() as *const Block).offset(self.len as isize) };
+        let len = ptr_end as usize - aligned_ptr_start as usize;
+        let madv_result = unsafe { libc::madvise(aligned_ptr_start, len, libc::MADV_RANDOM) };
+        if madv_result != 0 {
+            panic!("madvise failed: {}", madv_result);
+        }
+    }
+
     fn len(&self) -> usize {
         self.len
     }

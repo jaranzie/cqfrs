@@ -524,6 +524,7 @@ impl<'a, H: BuildHasher + 'a> IntoIterator for U32Cqf<H> {
     type IntoIter = U32ConsumingIterator<H>;
 
     fn into_iter(self) -> Self::IntoIter {
+        self.blocks.advise_seq();
         if self.metadata.num_occupied_slots == 0 {
             return Self::IntoIter {
                 cqf: self,
@@ -556,7 +557,8 @@ pub struct U32ConsumingIterator<H: BuildHasher> {
 impl<H: BuildHasher> Iterator for U32ConsumingIterator<H> {
     type Item = (u64, u64);
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_quotient >= self.end {
+        if self.current_quotient >= self.end || self.num == self.cqf.occupied_slots() {
+            self.cqf.blocks.advise_normal();
             return None;
         }
         let mut current_remainder: Remainder = 0;
@@ -572,6 +574,11 @@ impl<H: BuildHasher> Iterator for U32ConsumingIterator<H> {
         if !self.cqf.blocks.is_runend(self.current_quotient) {
             self.current_quotient += 1;
             return Some((current_count, current_hash));
+        }
+        if current_count != 1 {
+            self.num += 2;
+        } else {
+            self.num += 1;
         }
         self.current_quotient += 1;
         let mut block_index = self.current_run_start as usize / SLOTS_PER_BLOCK;
@@ -591,7 +598,7 @@ impl<H: BuildHasher> Iterator for U32ConsumingIterator<H> {
         if self.current_quotient < self.current_run_start {
             self.current_quotient = self.current_run_start;
         }
-        if self.num % (1 << 22) == 0 {
+        if self.num % (1 << 9) <= 1 {
             self.cqf.blocks.madvise_dont_need(self.current_run_start);
         }
         self.num += 1;
@@ -612,7 +619,8 @@ pub struct U32RefIterator<'a, H: BuildHasher> {
 impl<'a, H: BuildHasher> Iterator for U32RefIterator<'a, H> {
     type Item = (u64, u64);
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_quotient >= self.end {
+        if self.current_quotient >= self.end || self.num == self.cqf.occupied_slots() {
+            self.cqf.blocks.advise_normal();
             return None;
         }
         let mut current_remainder: Remainder = 0;
@@ -628,6 +636,11 @@ impl<'a, H: BuildHasher> Iterator for U32RefIterator<'a, H> {
         if !self.cqf.blocks.is_runend(self.current_quotient) {
             self.current_quotient += 1;
             return Some((current_count, current_hash));
+        }
+        if current_count != 1 {
+            self.num += 2;
+        } else {
+            self.num += 1;
         }
         self.current_quotient += 1;
         let mut block_index = self.current_run_start as usize / SLOTS_PER_BLOCK;
@@ -647,7 +660,7 @@ impl<'a, H: BuildHasher> Iterator for U32RefIterator<'a, H> {
         if self.current_quotient < self.current_run_start {
             self.current_quotient = self.current_run_start;
         }
-        if self.num % (1 << 22) == 0 {
+        if self.num % (1 << 9) <= 1 {
             self.cqf.blocks.madvise_dont_need(self.current_run_start);
         }
         self.num += 1;
@@ -657,6 +670,7 @@ impl<'a, H: BuildHasher> Iterator for U32RefIterator<'a, H> {
 
 impl<H: BuildHasher> U32Cqf<H> {
     pub fn iter(&self) -> U32RefIterator<H> {
+        self.blocks.advise_seq();
         if self.metadata.num_occupied_slots == 0 {
             return U32RefIterator {
                 cqf: self,
