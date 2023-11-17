@@ -520,32 +520,5 @@ impl<A: CqfIteratorImpl, B: CqfIteratorImpl> Iterator for ZippedCqfIter<A, B> {
                 }
             }
         }
-        // let current_a_ref = self.current_a.as_ref();
-        // let current_b_ref = self.current_b.as_ref();
-        // if current_a_ref.is_none() && current_b_ref.is_none() {
-        //     return None;
-        // } else if (current_a_ref.is_some() && current_b_ref.is_none())
-        //     || (current_a_ref.is_some()
-        //         && current_b_ref.is_some()
-        //         && current_a_ref.unwrap().1 < current_b_ref.unwrap().1)
-        // {
-        //     let current1 = self.current_a.take();
-        //     self.current_a = self.iter_a.next();
-        //     return Some((current1, None));
-        // } else if (current_b_ref.is_some() && current_a_ref.is_none())
-        //     || (current_a_ref.is_some()
-        //         && current_b_ref.is_some()
-        //         && current_a_ref.unwrap().1 > current_b_ref.unwrap().1)
-        // {
-        //     let current2 = self.current_b.take();
-        //     self.current_b = self.iter_b.next();
-        //     return Some((None, current2));
-        // } else {
-        //     let current1 = self.current_a.take();
-        //     let current2 = self.current_b.take();
-        //     self.current_a = self.iter_a.next();
-        //     self.current_b = self.iter_b.next();
-        //     return Some((current1, current2));
-        // }
     }
 }

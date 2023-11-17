@@ -92,6 +92,8 @@ pub trait Blocks {
         // }
     }
 
+    fn advise_seq(&self);
+
     fn bytes_needed(num_blocks: usize) -> usize;
 
     // Default by quotient
