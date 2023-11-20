@@ -1,6 +1,6 @@
-#![feature(sync_unsafe_cell)]
+#![feature(sync_unsafe_cell,ptr_internals,unchecked_shifts)]
 #![feature(unchecked_math)]
-#![feature(ptr_internals)]
+// #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 mod blocks;
 mod cqf;
