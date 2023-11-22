@@ -405,8 +405,8 @@ impl CqfMerge {
                 insert_quotient,
                 insert_remainder,
                 Some(&mut insert_count),
-                0,
-                0,
+                u64::MAX,
+                u64::MAX,
                 None,
             );
             new_cqf.merge_insert(
@@ -431,8 +431,8 @@ impl CqfMerge {
             next_quotient_ = Self::next_quotient(new_cqf, &current_b, &None, insert_quotient);
             closure.merge_cb(
                 new_cqf,
-                0,
-                0,
+                u64::MAX,
+                u64::MAX,
                 None,
                 insert_quotient,
                 insert_remainder,
