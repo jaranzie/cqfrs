@@ -3,7 +3,7 @@ use cqfrs::*;
 use rand::Rng;
 use std::{collections::HashMap, time::Duration};
 
-const LOGN_SLOTS: u64 = 25;
+const LOGN_SLOTS: u64 = 26;
 
 const HASH_BITS: u64 = 46;
 const TEST_MASK: u64 = (1 << HASH_BITS) - 1;
@@ -99,7 +99,7 @@ fn test_init(num_elements: usize, hash_mask: u64) -> Vec<u64> {
     let mut randgen = rand::thread_rng();
     for _ in 0..num_elements {
         let num: u64 = randgen.gen();
-        numbers.push(num & hash_mask);
+        numbers.push((num & hash_mask)%10000);
     }
     numbers
 }

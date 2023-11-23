@@ -660,9 +660,9 @@ impl<'a, H: BuildHasher> Iterator for U32RefIterator<'a, H> {
         if self.current_quotient < self.current_run_start {
             self.current_quotient = self.current_run_start;
         }
-        if self.num % (1 << 9) <= 1 {
-            self.cqf.blocks.madvise_dont_need(self.current_run_start);
-        }
+        // if self.num % (1 << 9) <= 1 {
+        //     self.cqf.blocks.madvise_dont_need(self.current_run_start);
+        // }
         self.num += 1;
         return Some((current_count, current_hash));
     }
