@@ -3,13 +3,13 @@ use cqfrs::*;
 use rand::Rng;
 use std::{collections::HashMap, time::Duration};
 
-const LOGN_SLOTS: u64 = 27;
+const LOGN_SLOTS: u64 = 25;
 
 const HASH_BITS: u64 = 46;
 const TEST_MASK: u64 = (1 << HASH_BITS) - 1;
 
 fn main() {
-    let num_elements: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.90) as usize;
+    let num_elements: usize = ((1 << (LOGN_SLOTS)) as f32 * 0.94) as usize;
     // let num_elemnts: usize = ((1 << (LOGN_SLOTS-3)) as f32 * 0.90) as usize;
     let numbers = test_init(num_elements, TEST_MASK);
 
@@ -78,10 +78,10 @@ fn main() {
 
     // CqfMerge::merge(cqf1.into_iter(), cqf2.into_iter(), &mut cqf3);
 
-    // for (&k, &v) in temp.iter() {
-    //     let count = cqf3.query(k);
-    //     assert_eq!(count.0, v);
-    // }
+    for (&k, &v) in temp.iter() {
+        let count = cqf1.query(k);
+        assert_eq!(count.0, v);
+    }
 
     let now = std::time::Instant::now();
     println!("Starting iter");

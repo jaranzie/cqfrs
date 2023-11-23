@@ -576,14 +576,14 @@ impl<H: BuildHasher> Iterator for U64ConsumingIterator<H> {
         let current_hash = self
             .cqf
             .build_hash(self.current_run_start, current_remainder);
-        if !self.cqf.blocks.is_runend(self.current_quotient) {
-            self.current_quotient += 1;
-            return Some((current_count, current_hash));
-        }
         if current_count != 1 {
             self.num += 2;
         } else {
             self.num += 1;
+        }
+        if !self.cqf.blocks.is_runend(self.current_quotient) {
+            self.current_quotient += 1;
+            return Some((current_count, current_hash));
         }
         self.current_quotient += 1;
         let mut block_index = self.current_run_start as usize / SLOTS_PER_BLOCK;
@@ -640,14 +640,14 @@ impl<'a, H: BuildHasher> Iterator for U64RefIterator<'a, H> {
         let current_hash = self
             .cqf
             .build_hash(self.current_run_start, current_remainder);
-        if !self.cqf.blocks.is_runend(self.current_quotient) {
-            self.current_quotient += 1;
-            return Some((current_count, current_hash));
-        }
         if current_count != 1 {
             self.num += 2;
         } else {
             self.num += 1;
+        }
+        if !self.cqf.blocks.is_runend(self.current_quotient) {
+            self.current_quotient += 1;
+            return Some((current_count, current_hash));
         }
         self.current_quotient += 1;
         let mut block_index = self.current_run_start as usize / SLOTS_PER_BLOCK;
