@@ -505,12 +505,12 @@ impl<A: CqfIteratorImpl, B: CqfIteratorImpl> Iterator for ZippedCqfIter<A, B> {
                 Some((None, Some(b_val)))
             }
             (Some(a_val), Some(b_val)) => {
-                let a_quotient = a_val.0;
-                let b_quotient = b_val.0;
-                if a_quotient < b_quotient {
+                let a_hash = a_val.1;
+                let b_hash = b_val.1;
+                if a_hash < b_hash {
                     self.current_a = self.iter_a.next();
                     Some((Some(a_val), None))
-                } else if a_quotient > b_quotient {
+                } else if a_hash > b_hash {
                     self.current_b = self.iter_b.next();
                     Some((None, Some(b_val)))
                 } else {
