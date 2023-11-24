@@ -63,7 +63,17 @@ impl<H: BuildHasher> CountingQuotientFilter for U64Cqf<H> {
 
     fn open_file(hasher: Self::Hasher, mut file: File) -> Result<Self, CqfError> {
         // Dummy data to reuse function
-        let (metadata, blocks) = Self::make_metadata_blocks(32, 64, false, Some(&mut file), false)?;
+        use std::io::Read;
+        let md: Metadata;
+        // read metadata from file
+        unsafe {
+            let mut metadata_buffer = [0u8; std::mem::size_of::<Metadata>()];
+            file.read_exact(&mut metadata_buffer)
+                .map_err(|_| CqfError::FileError)?;
+            let metadata_ptr = metadata_buffer.as_ptr() as *const Metadata;
+            md = *metadata_ptr;
+        }
+        let (metadata, blocks) = Self::make_metadata_blocks(md.quotient_bits, md.quotient_bits + md.remainder_bits, md.invertable(), Some(&mut file), false)?;
         let runtime_data = RuntimeData::new(Some(file), hasher, metadata.num_real_slots);
         Ok(Self {
             metadata,
@@ -701,10 +711,15 @@ impl<H: BuildHasher> CqfIteratorImpl for U64RefIterator<'_, H> {}
 
 impl<H: BuildHasher> Drop for U64Cqf<H> {
     fn drop(&mut self) {
+        // println!("Dropping U64Cqf");
         let metadata_ptr = self.metadata.0.as_ptr();
         let bytes = self.metadata.total_size_bytes;
+        let error;
         unsafe {
-            libc::munmap(metadata_ptr as *mut libc::c_void, bytes as usize);
+            error = libc::munmap(metadata_ptr as *mut libc::c_void, bytes as usize);
+        }
+        if error != 0 {
+            println!("Error unmapping metadata: {} {:?}", error, std::io::Error::last_os_error());
         }
     }
 }

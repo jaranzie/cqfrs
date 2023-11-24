@@ -14,6 +14,7 @@ impl MetadataWrapper {
 }
 
 #[repr(C)]
+#[derive(Debug, Copy, Clone)]
 struct Metadata {
     pub total_size_bytes: u64,
     pub num_real_slots: u64,
