@@ -289,7 +289,7 @@ mod blocks {
                 runend_ignore_bits,
                 runend_rank,
             );
-
+            
             if runend_block_offset == 64 {
                 if blocks_offset == 0 && intrablock_rank == 0 {
                     return quotient;

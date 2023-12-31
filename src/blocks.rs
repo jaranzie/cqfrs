@@ -1,13 +1,13 @@
-type Offset = u16;
+type Offset = u64;
 
 use crate::{
-    utils::{bitmask, bitrank, bitselect, bitselectv, popcntv},
+    utils::{bitmask, bitrank, count_ones_ignore, index_of_ith_bit, index_of_ith_bit_ignore},
     SLOTS_PER_BLOCK,
 };
 
 // pub mod u64_soa_blocks;
 pub mod u32_blocks;
-pub mod u64_blocks;
+// pub mod u64_blocks;
 
 pub trait Blocks {
     type Remainder;
@@ -45,7 +45,7 @@ pub trait Blocks {
         let mut runend_block_index = block_index + block_offset as usize / 64;
         let mut runend_ignore_bits = block_offset % 64;
         let mut runend_rank = intrablock_rank - 1;
-        let mut runend_block_offset: u64 = bitselectv(
+        let mut runend_block_offset: u64 = index_of_ith_bit_ignore(
             self.runends_by_block(runend_block_index),
             runend_ignore_bits,
             runend_rank,
@@ -56,13 +56,13 @@ pub trait Blocks {
                 return quotient;
             } else {
                 loop {
-                    runend_rank -= popcntv(
+                    runend_rank -= count_ones_ignore(
                         self.runends_by_block(runend_block_index),
                         runend_ignore_bits,
                     );
                     runend_block_index += 1;
                     runend_ignore_bits = 0;
-                    runend_block_offset = bitselectv(
+                    runend_block_offset = index_of_ith_bit_ignore(
                         self.runends_by_block(runend_block_index),
                         runend_ignore_bits,
                         runend_rank,
@@ -174,12 +174,12 @@ pub trait Blocks {
         if self.is_occupied_by_block(block_index, 0) {
             return 0;
         }
-        let mut slot_index = bitselect(self.occupieds_by_block(block_index), 0);
+        let mut slot_index = index_of_ith_bit(self.occupieds_by_block(block_index), 0);
         if slot_index == 64 {
             while slot_index == 64 && block_index < self.num_blocks() - 1 {
                 // May be worth doing a count ones to see if there are any occupied slots before calling function
                 block_index += 1;
-                slot_index = bitselect(self.occupieds_by_block(block_index), 0);
+                slot_index = index_of_ith_bit(self.occupieds_by_block(block_index), 0);
             }
         }
         if block_index == self.num_blocks() - 1 && slot_index == 64 {
