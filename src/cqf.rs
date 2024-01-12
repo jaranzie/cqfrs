@@ -224,6 +224,9 @@ impl CqfMerge {
         let mut current_b = iter_b.next();
         let mut merged_cqf_current_quotient = 0u64;
         while current_a.is_some() && current_b.is_some() {
+
+            let mut is_now = false;
+
             let insert_quotient: u64;
             let insert_remainder: u64;
             let insert_count: u64;
@@ -236,6 +239,11 @@ impl CqfMerge {
                 {
                     let a_val = current_a.as_ref().unwrap();
                     let b_val = current_b.as_ref().unwrap();
+
+                    if a_val.1 == 2215894999 {
+                        is_now = true;
+                    }
+
                     let av = new_cqf.quotient_remainder_from_hash(a_val.1);
                     (a_quotient, a_remainder) = (av.0, av.1.into());
                     let bv = new_cqf.quotient_remainder_from_hash(b_val.1);
@@ -268,6 +276,9 @@ impl CqfMerge {
                 next_quotient_ =
                     Self::next_quotient(new_cqf, &current_a, &current_b, insert_quotient);
             }
+
+
+
             new_cqf.merge_insert(
                 &mut merged_cqf_current_quotient,
                 insert_quotient,
@@ -281,6 +292,9 @@ impl CqfMerge {
             let insert_remainder: u64;
             let insert_count: u64;
             let next_quotient_: u64;
+
+            let mut is_now = false;
+
             {
                 let av = new_cqf.quotient_remainder_from_hash(current_a.as_ref().unwrap().1);
                 (insert_quotient, insert_remainder) = (av.0, av.1.into());
@@ -288,6 +302,7 @@ impl CqfMerge {
                 current_a = iter_a.next();
             }
             next_quotient_ = Self::next_quotient(new_cqf, &current_a, &None, insert_quotient);
+
             new_cqf.merge_insert(
                 &mut merged_cqf_current_quotient,
                 insert_quotient,
@@ -328,6 +343,9 @@ impl CqfMerge {
         let mut current_b = iter_b.next();
         let mut merged_cqf_current_quotient = 0u64;
         while current_a.is_some() && current_b.is_some() {
+
+            let mut is_now = false;
+
             let insert_quotient: u64;
             let insert_remainder: u64;
             let insert_count: u64;
@@ -390,6 +408,9 @@ impl CqfMerge {
             );
         }
         while current_a.is_some() {
+
+            let mut is_now = false;
+
             let insert_quotient: u64;
             let insert_remainder: u64;
             let mut insert_count: u64;
@@ -410,6 +431,7 @@ impl CqfMerge {
                 u64::MAX,
                 None,
             );
+
             new_cqf.merge_insert(
                 &mut merged_cqf_current_quotient,
                 insert_quotient,
@@ -439,6 +461,8 @@ impl CqfMerge {
                 insert_remainder,
                 Some(&mut insert_count),
             );
+
+
             new_cqf.merge_insert(
                 &mut merged_cqf_current_quotient,
                 insert_quotient,

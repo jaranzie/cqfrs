@@ -12,7 +12,7 @@ pub struct Block {
     runends: u64,
     counts: u64,
     remainders: [Remainder; SLOTS_PER_BLOCK],
-    offset: u16,
+    offset: u64,
     // padding: [u16; 3],
 }
 

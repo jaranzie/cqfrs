@@ -1,4 +1,4 @@
-type Offset = u16;
+type Offset = u64;
 
 use crate::{
     utils::{bitmask, bitrank, bitselect, bitselectv, popcntv},
